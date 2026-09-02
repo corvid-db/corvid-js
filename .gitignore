@@ -1,0 +1,13 @@
+# Rust
+/target
+
+# Node
+node_modules/
+*.log
+
+# wasm-pack output (rebuilt from source; pkg/ ships via "files" on
+# npm publish, not in git — CI and contributors run `npm run build`)
+/pkg
+
+# test scratch
+test/work/

@@ -1,0 +1,46 @@
+[package]
+name = "corvid-js"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "Browser/Worker binding for the corvid embedded database — the engine compiled to wasm32 behind wasm-bindgen typed exports, wrapped as idiomatic OOP"
+repository = "https://github.com/corvid-db/corvid-js"
+keywords = ["database", "embedded", "vector", "search", "wasm"]
+categories = ["database-implementations", "wasm"]
+
+# The cdylib wasm-bindgen instantiates (wasm-pack --target web produces
+# pkg/corvid_js.js + pkg/corvid_js_bg.wasm; see docs/PLAN.md §2 for the
+# architecture ruling and package.json for the JS layer's entries).
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+# The engine, pinned to the exact release tag (docs/PLAN.md §2: the
+# binding pins exact engine tags; corvid is not on crates.io). The
+# engine's own corvid-wasm size harness proves this dep graph links
+# clean on wasm32-unknown-unknown within the 2 MB gzipped budget.
+corvid = { git = "https://github.com/corvid-db/corvid.git", tag = "v0.3.0" }
+
+# Size-optimized release profile for the shipped wasm bundle — the same
+# shape the engine's corvid-wasm harness measures under (its
+# [profile.wasm-release]); the binding's own budget is enforced by
+# scripts/size-gate.sh (see docs/PLAN.md §6).
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# wasm-opt is OFF, by measurement (docs/PLAN.md §6): on this engine the
+# cargo LTO + opt-level="z" output gzips SMALLER than a wasm-opt -O/-Oz
+# pass over it (363 KB vs 400/408 KB gzipped at bootstrap), and the
+# budget contract is on the gzipped size — the same unit the engine's
+# < 2 MB CI gate enforces. Revisit if a future binaryen release flips
+# the numbers.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

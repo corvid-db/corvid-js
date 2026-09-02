@@ -1,0 +1,57 @@
+{
+  "name": "corvid-js",
+  "version": "0.1.0",
+  "description": "Browser/Worker binding for the corvid embedded database — the engine compiled to wasm32, exposed as idiomatic synchronous OOP (in-memory per session; OPFS persistence is a decided future addition)",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/corvid-db/corvid-js.git"
+  },
+  "keywords": [
+    "database",
+    "embedded",
+    "vector",
+    "search",
+    "hybrid",
+    "wasm",
+    "browser"
+  ],
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "node": "./node.mjs",
+      "default": "./index.js"
+    },
+    "./node": {
+      "types": "./index.d.ts",
+      "default": "./node.mjs"
+    },
+    "./pkg/corvid_js_bg.wasm": "./pkg/corvid_js_bg.wasm"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "node.mjs",
+    "pkg/corvid_js.js",
+    "pkg/corvid_js.d.ts",
+    "pkg/corvid_js_bg.wasm",
+    "pkg/corvid_js_bg.wasm.d.ts"
+  ],
+  "engines": {
+    "node": ">= 20"
+  },
+  "scripts": {
+    "build": "wasm-pack build --release --target web --out-dir pkg --out-name corvid_js",
+    "test": "vitest run",
+    "lint": "cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings",
+    "size-gate": "./scripts/size-gate.sh",
+    "surface-gate": "./scripts/surface-gate.sh",
+    "examples": "node examples/quickstart.js && node examples/hybrid.js && node examples/vector-index.js && node examples/text-search.js && node examples/graph.js && node examples/geo.js"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}

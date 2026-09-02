@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  surface-gate:
+    # docs/SURFACE.tsv vs the engine's surface list at the PINNED tag:
+    # every engine construct mapped (binding api + proving test) or N/A
+    # with a reason; N/A count pinned to the committed baseline.
+    name: surface gate (SURFACE.tsv vs pinned engine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve docs/SURFACE.tsv against the pinned engine surface
+        run: ./scripts/surface-gate.sh
+
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: wasm build + golden suite — ${{ matrix.os }} / node${{ matrix.node }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        # Toolchain policy (scripts/bindings/README.md, engine repo):
+        # modern minimums (engines >= 20; 18 is EOL), CI tests latest +
+        # previous lines — 24 (current), 22 (LTS), 20 (floor) — across a
+        # cheap linux+macos matrix (the wasm artifact is
+        # platform-independent; the legs prove the host toolchains and
+        # runtimes, not per-platform codegen).
+        node: [24, 22, 20]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Build the wasm package
+        run: npm run build
+      - name: Size gate (gzipped wasm <= 1 MiB; engine reference 2 MiB)
+        run: ./scripts/size-gate.sh
+      - name: Golden suite (230 fixture lines + regressions through the OOP surface)
+        run: npx vitest run
+      - name: Examples tour (six runnable programs, deterministic output)
+        run: npm run examples
+
+  package:
+    name: npm pack dry-run
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm install
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - run: npm run build
+      - run: npm pack --dry-run
