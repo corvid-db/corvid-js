@@ -15,9 +15,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "corvid"
-version = "0.3.1"
-source = "git+https://github.com/corvid-db/corvid.git?tag=v0.3.1#9fe89c15a3ab8eaae369990f90ed85671302c716"
+name = "corvid-db"
+version = "0.3.2"
+source = "git+https://github.com/corvid-db/corvid.git?tag=v0.3.2#b726ac5a1ebace9f94dc12007a4e06927241cf4c"
 dependencies = [
  "redb",
  "thiserror",
@@ -27,7 +27,7 @@ dependencies = [
 name = "corvid-js"
 version = "0.1.0"
 dependencies = [
- "corvid",
+ "corvid-db",
  "js-sys",
  "wasm-bindgen",
 ]
