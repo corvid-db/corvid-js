@@ -9,8 +9,7 @@
 
 import { beforeEach, expect, test } from 'vitest';
 
-import { AsyncDb } from '../opfs-async.js';
-import { openOpfs } from '../opfs-async.js';
+import { AsyncDb, openOpfs } from '../opfs-async.js';
 import { CorvidError, CorvidFloat, field } from '../index.js';
 import { DirectLink } from '../opfs-link.js';
 import { bootEngine, createRpcHost } from '../opfs-rpc.js';
@@ -22,8 +21,10 @@ let env;
 
 /// The fake OPFS environment: a name-keyed directory of fake handles
 /// with per-name exclusive locking (a second openHandle while a handle
-/// is live = the cross-tab BUSY of the real thing).
-function makeEnv() {
+/// is live = the cross-tab BUSY of the real thing). `targetQuotaAt`
+/// starves backup targets — the debris-path lever. Names are RAW keys
+/// here (the real worker appends `.corvid` only to database names).
+function makeEnv({ targetQuotaAt = Infinity } = {}) {
   const files = new Map(); // name -> { handle }
   return {
     files,
@@ -49,7 +50,7 @@ function makeEnv() {
       if (files.has(name)) {
         throw { code: 17, message: `backup target already exists: ${name}` };
       }
-      const handle = makeFakeHandle();
+      const handle = makeFakeHandle({ quotaAt: targetQuotaAt });
       files.set(name, { handle });
       return corvidOpfs.register(handle);
     },
@@ -257,5 +258,138 @@ test('phraseSearch and geo mirror through the facade', async () => {
   await docs.createTextIndex('body');
   const hits = await docs.phraseSearch('body', 'embedded database', 5);
   expect(hits.map((h) => h.key)).toEqual(['a']);
+  await docs.insert('berlin', { pos: { lat: 52.52, lon: 13.405 } });
+  await docs.createGeoIndex('pos');
+  const near = await docs.geoNearest('pos', 52.52, 13.405, 1);
+  expect(near.map((h) => h.key)).toEqual(['berlin']);
+  await db.close();
+});
+
+test('the TTL family mirrors through the facade', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insertWithTtl('expiring', { n: 1 }, 99);
+  expect(await docs.getTtl('expiring')).toBe(99);
+  await docs.setTtl('expiring', 42);
+  expect(await docs.getTtl('expiring')).toBe(42);
+  await docs.insertWithTtl('gone', { n: 2 }, 10);
+  await docs.insertWithTtl('epoch', { n: 4 }, 0);
+  await docs.insert('stays', { n: 3 });
+  // At now=100: gone(10), epoch(0), and the 42-expiry doc all purge.
+  expect(await docs.purgeExpired(100)).toBe(3);
+  expect(await docs.len()).toBe(1);
+  expect(await docs.getTtl('stays')).toBeNull();
+  await db.close();
+});
+
+test('derived facades reject with code 1 after db.close() — no hangs, both hosts', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insert('a', { n: 1 });
+  const q = docs.query().filter(field('n').eq(1));
+  await db.close();
+  await expect(codeOf(docs.get('a'))).resolves.toBe(1);
+  await expect(codeOf(docs.len())).resolves.toBe(1);
+  await expect(codeOf(docs.scanEach(() => {}))).resolves.toBe(1);
+  await expect(codeOf(docs.close())).resolves.toBe(1);
+  await expect(codeOf(q.count())).resolves.toBe(1);
+  await expect(codeOf(q.close())).resolves.toBe(1);
+});
+
+test('a throwing scanEach callback rejects with the callback error after cancelling', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insertMany(Array.from({ length: 700 }, (_, i) => [`k${i}`, { i }]));
+  let seen = 0;
+  await expect(
+    docs.scanEach(() => {
+      seen += 1;
+      if (seen === 3) throw new Error('boom-from-callback');
+      return true;
+    }),
+  ).rejects.toThrow('boom-from-callback');
+  expect(seen).toBe(3);
+  // The collection is still usable after the cancelled walk.
+  expect(await docs.len()).toBe(700);
+  await db.close();
+});
+
+test('failed backup leaves no debris (removeTarget runs, original error wins)', async () => {
+  // A target whose fake handle is quota-starved: the engine's physical
+  // copy fails mid-write; §5.5 step 4 must remove the partial file.
+  const env2 = makeEnv({ targetQuotaAt: 1 });
+  const host = createRpcHost(glue, env2);
+  const db = new AsyncDb(new DirectLink(host), 1);
+  await db._rpc('db.open', ['src']);
+  const docs = await db.collection('docs');
+  await docs.insert('a', { padding: 'x'.repeat(4096), n: 1 });
+  await expect(codeOf(db.backupTo('starved'))).resolves.toBeLessThanOrEqual(5);
+  expect(env2.files.has('starved')).toBe(false); // no debris  await db.close();
+});
+
+test('CorvidFloat unwraps in predicates, patches, and CAS operands too', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insert('f', { v: new CorvidFloat(2) }); // Float(2)
+  await docs.insert('i', { v: 2 }); // Int(2)
+  // Filter equality is SEMANTIC for numbers (PLAN.md §4: 2 and 2.0
+  // compare equal in filters) — the unwrap must at least carry the
+  // value faithfully: both docs match.
+  const rows = await docs.query().filter(field('v').eq(new CorvidFloat(2))).run();
+  expect(rows.map((r) => r.key).sort()).toEqual(['f', 'i']);
+  // Patch carries the marker: the Int doc becomes Float(2).
+  await docs.patch('i', { v: new CorvidFloat(2) });
+  expect((await docs.query().groupCount('v'))['f:2']).toBe(2);
+  // CAS equality IS typed (unique_value_eq: Int ≠ Float) — expected is
+  // the whole document, with the marker carrying the Float kind: the
+  // typed doc matches only the stored Float.
+  const applied = await docs.compareAndSet(
+    'i',
+    { v: new CorvidFloat(2) },
+    { v: new CorvidFloat(3) },
+  );
+  expect(applied).toBe(true);
+  expect((await docs.query().groupCount('v'))['f:3']).toBe(1);
+  // The typed distinction is observable: an Int-expected doc must NOT
+  // match the stored Float(3).
+  expect(await docs.compareAndSet('i', { v: 3 }, { v: 4 })).toBe(false);
+  await db.close();
+});
+
+test('wire-value rejects: Map/Set/Date, functions, cycles (12) — not silent {}', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await expect(codeOf(docs.insert('m', { v: new Map([['a', 1]]) }))).resolves.toBe(12);
+  await expect(codeOf(docs.insert('d', { v: new Date() }))).resolves.toBe(12);
+  await expect(codeOf(docs.insert('f', { v: () => 1 }))).resolves.toBe(12);
+  const cyclic = { n: 1 };
+  cyclic.self = cyclic;
+  await expect(codeOf(docs.insert('c', cyclic))).resolves.toBe(12);
+  expect(await docs.len()).toBe(0); // nothing slipped through
+  // Chain ops throw SYNCHRONOUSLY (§4.4's timing contract).
+  expect(() => docs.query().filter({ nested: () => 1 })).toThrow(CorvidError);
+  await db.close();
+});
+
+test('vector() without metric defaults to cosine; update returns the CAS boolean', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insert('a', { v: new Float32Array([1, 0]) });
+  const rows = await docs.query().vector('v', new Float32Array([1, 0]), 5).run();
+  expect(rows.map((r) => r.key)).toEqual(['a']); // no metric argument
+  expect(await docs.update('a', (cur) => ({ ...cur, extra: 1 }))).toBe(true);
+  await db.close();
+});
+
+test('query close() resolves after a terminal (consumed) and after poison', async () => {
+  const db = await openDb();
+  const docs = await db.collection('docs');
+  await docs.insert('a', { n: 1 });
+  const q1 = docs.query().filter(field('n').eq(1));
+  await q1.count();
+  await expect(q1.close()).resolves.toBeUndefined(); // post-consumption close
+  const q2 = docs.query().filter({ op: 'nonsense' });
+  await expect(codeOf(q2.run())).resolves.toBe(12);
+  await expect(q2.close()).resolves.toBeUndefined(); // post-poison close
   await db.close();
 });

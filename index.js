@@ -297,7 +297,11 @@ export class Collection {
     call(this.#node.insertWithTtl, this.#node, [key, doc, expiresAt]);
   }
 
-  /** Set (or clear, with `null`) the expiry for an existing key. */
+  /**
+   * Set (or replace) the expiry for an existing key (epoch units of
+   * your choosing). No clear-TTL operation exists in the engine or the
+   * C ABI; `null` coerces to 0 (an expiry at instant 0), not a clear.
+   */
   setTtl(key, expiresAt) {
     call(this.#node.setTtl, this.#node, [key, expiresAt]);
   }

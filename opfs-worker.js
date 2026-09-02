@@ -101,7 +101,12 @@ self.onmessage = async (ev) => {
     // contract the engine Db (and every derived handle) is dropped,
     // the backend's close has fired, and the OPFS lock is free —
     // §5.3's pinned ordering. Then the worker terminates.
-    self.postMessage({ t: 'ok', id: m.id, v });
+    if (m.v instanceof Uint8Array && m.v.buffer) {
+      // SPEC §7.2: response buffers are transferred, not cloned.
+      self.postMessage({ t: 'ok', id: m.id, v: m.v }, [m.v.buffer]);
+    } else {
+      self.postMessage({ t: 'ok', id: m.id, v: m.v });
+    }
     if (m.op === 'db.close') {
       openDbs -= 1;
       if (openDbs <= 0) self.close();

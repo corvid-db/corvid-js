@@ -27,9 +27,9 @@
 // both into {code, message} — hosts serialize that into the err
 // envelope.
 
-/// Boot the engine (idempotent per host): Node instantiates
-/// synchronously from disk, browsers fetch. Installs the wasm memory
-/// into the shim — the OPFS backend's prerequisite (SPEC §3.2).
+// Boot the engine (idempotent per host): Node instantiates
+// synchronously from disk, browsers fetch. Installs the wasm memory
+// into the shim — the OPFS backend's prerequisite (SPEC §3.2).
 export async function bootEngine() {
   const glue = await import('./pkg/corvid_js.js');
   const { corvidOpfs } = await import('./opfs-shim.js');
@@ -50,7 +50,7 @@ export async function bootEngine() {
   return glue;
 }
 
-/// Normalize any thrown value into the protocol's {code, message}.
+// Normalize any thrown value into the protocol's {code, message}.
 function normalizeError(e) {
   if (e && typeof e.code === 'number' && typeof e.message === 'string') {
     return { code: e.code, message: e.message }; // env-thrown
@@ -68,16 +68,16 @@ function normalizeError(e) {
   return { code: 18, message: String(e?.message ?? e) }; // Io-flavored catch-all
 }
 
-/// The collection methods the generic coll.call op forwards to, in
-/// their glue names (SPEC §7.2: every AsyncCollection method minus
-/// update — composed client-side — and scanEach — the streaming op).
-/// An allowlist, not a denylist: a new engine method never silently
-/// becomes callable. `scanRows` is included (a materialized scan is a
-/// legitimate op); `scanCb` is not (a callback cannot cross).
-export const COLL_METHODS = new Set([
+// The collection methods the generic coll.call op forwards to, in
+// their glue names (SPEC §7.2: every AsyncCollection method minus
+// update — composed client-side — and scanEach — the streaming op).
+// An allowlist, not a denylist: a new engine method never silently
+// becomes callable. `scanRows` is included (a materialized scan is a
+// legitimate op); `scanCb` is not (a callback cannot cross).
+const COLL_METHODS = new Set([
   'insert', 'insertMany', 'insertAuto', 'patch', 'compareAndSet',
   'delete', 'deleteWhere', 'deleteBatch',
-  'insertWithTtl', 'setTtl', 'getTtl', 'purgeExpired',
+  'insertWithTtl', 'setTtl', 'ttl', 'purgeExpired',
   'get', 'scanRows', 'page', 'len', 'isEmpty', 'phraseSearch',
   'createScalarIndex', 'createCompoundIndex', 'createTextIndex',
   'createTextIndexOndisk', 'createGeoIndex', 'createVectorIndex',
@@ -90,27 +90,27 @@ export const COLL_METHODS = new Set([
   'geoWithinRadius', 'geoWithinBbox', 'geoNearest',
 ]);
 
-/// Query chain methods (their replies carry errors only — the facade's
-/// poisoning rule) and terminal methods (results carried back).
-export const QUERY_CHAIN = new Set([
+// Query chain methods (their replies carry errors only — the facade's
+// poisoning rule) and terminal methods (results carried back).
+const QUERY_CHAIN = new Set([
   'filter', 'vector', 'text', 'fuseRrf', 'rerankMmr', 'approx',
   'limit', 'offset', 'orderBy', 'select',
 ]);
-export const QUERY_TERMINAL = new Set([
+const QUERY_TERMINAL = new Set([
   'run', 'count', 'countDistinct', 'sum', 'avg', 'min', 'max',
   'groupCount', 'groupSum', 'groupAvg',
 ]);
 
 const SCAN_CHUNK = 512;
 
-/// Create the RPC host. `env` implements the environment contract:
-///   openHandle(name)   -> Promise<u32 id>  (acquire + register; the
-///                       BUSY/InvalidName mapping is the env's job —
-///                       SPEC §5.2 step 5, §6)
-///   backupTarget(name) -> Promise<u32 id>  (existence pre-check —
-///                       code 17 on a hit; create + register)
-///   removeTarget(name) -> Promise<void>    (best-effort debris
-///                       cleanup after a failed backup)
+// Create the RPC host. `env` implements the environment contract:
+//   openHandle(name)   -> Promise<u32 id>  (acquire + register; the
+//                       BUSY/InvalidName mapping is the env's job —
+//                       SPEC §5.2 step 5, §6)
+//   backupTarget(name) -> Promise<u32 id>  (existence pre-check —
+//                       code 17 on a hit; create + register)
+//   removeTarget(name) -> Promise<void>    (best-effort debris
+//                       cleanup after a failed backup)
 export function createRpcHost(glue, env) {
   const dbs = new Map(); // h -> { db, colls:Set, queries:Set }
   const colls = new Map(); // h -> { coll, dbh }
@@ -124,11 +124,11 @@ export function createRpcHost(glue, env) {
     dbs.get(c.dbh)?.colls.delete(h);
   }
 
-  /// db.close's force-teardown: every derived handle closes first so
-  /// the engine Db actually drops — the backend's close (handle
-  /// release) fires BEFORE the close op's ack, holding SPEC §5.3's
-  /// pinned ordering regardless of user close discipline (one worker
-  /// per db makes this exact, not best-effort).
+  // db.close's force-teardown: every derived handle closes first so
+  // the engine Db actually drops — the backend's close (handle
+  // release) fires BEFORE the close op's ack, holding SPEC §5.3's
+  // pinned ordering regardless of user close discipline (one worker
+  // per db makes this exact, not best-effort).
   function closeDerivedOf(dbh) {
     for (const [h, q] of [...queries]) {
       if (q.dbh === dbh) {
@@ -150,8 +150,8 @@ export function createRpcHost(glue, env) {
     return entry;
   }
 
-  /// The query for handle `h` (owning collection `ch`), built lazily on
-  /// its first op (SPEC §7.2).
+  // The query for handle `h` (owning collection `ch`), built lazily on
+  // its first op (SPEC §7.2).
   function ensureQuery(h, ch) {
     let entry = queries.get(h);
     if (!entry) {
@@ -179,9 +179,9 @@ export function createRpcHost(glue, env) {
     }
   }
 
-  /// Handle one request; resolves/rejects with the op's outcome.
-  /// `emit(id, rows)` is the chunk sink for the streaming op — the
-  /// host wires it to the transport (DirectLink resolves eagerly).
+  // Handle one request; resolves/rejects with the op's outcome.
+  // `emit(id, rows)` is the chunk sink for the streaming op — the
+  // host wires it to the transport (DirectLink resolves eagerly).
   async function dispatch(req, emit) {
     const { op, h, ch, a = [] } = req;
     try {
@@ -221,6 +221,9 @@ export function createRpcHost(glue, env) {
         }
         case 'db.backupTo': {
           const [name] = a;
+          // The db handle is resolved BEFORE the target is created —
+          // a dead db handle must not leave a registered target behind.
+          requireDb(h);
           const targetId = await env.backupTarget(name); // code 17 on a hit
           try {
             return requireDb(h).db.backupOpfs(targetId);
@@ -318,7 +321,7 @@ export function createRpcHost(glue, env) {
 
   return {
     dispatch,
-    /// The cont/cancel sink for streaming ops (SPEC §7.1).
+    // The cont/cancel sink for streaming ops (SPEC §7.1).
     control(id, kind) {
       const s = streams.get(id);
       if (s && kind === 'cancel') s.canceled = true;

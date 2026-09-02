@@ -212,8 +212,8 @@ export declare class Collection {
   /** Insert with an expiry instant (`expiresAt`, epoch units of your choosing). */
   insertWithTtl(key: Key, doc: unknown, expiresAt: number): void;
 
-  /** Set (or clear, with `null`) the expiry for an existing key. */
-  setTtl(key: Key, expiresAt: number | null): void;
+  /** Set (or replace) the expiry for an existing key (epoch units of your choosing). */
+  setTtl(key: Key, expiresAt: number): void;
 
   /** The key's expiry instant, or `null` when it has no TTL. */
   getTtl(key: Key): number | null;
@@ -474,10 +474,10 @@ export declare class AsyncDb {
   dump(): Promise<Uint8Array>;
 
   /** Replay a dump stream into this database (merge semantics). */
-  load(bytes: BufferSource): Promise<void>;
+  load(bytes: Uint8Array): Promise<void>;
 
   /** Replay a dump stream, renaming collections per `renames`. */
-  loadWithRenames(bytes: BufferSource, renames: Record<string, string>): Promise<void>;
+  loadWithRenames(bytes: Uint8Array, renames: Record<string, string>): Promise<void>;
 
   /**
    * Physical backup into `name` (a sibling under the `corvid/` OPFS
@@ -539,7 +539,14 @@ export declare class AsyncCollection {
   // TTL
 
   insertWithTtl(key: Key, doc: unknown, expiresAt: number): Promise<void>;
-  setTtl(key: Key, expiresAt: number | null): Promise<void>;
+  /**
+   * Set (or replace) `key`'s expiry instant (`expiresAt`, epoch units
+   * of your choosing — the engine keeps no clock; `purgeExpired`
+   * compares against your `now`). There is no clear-TTL operation in
+   * the engine or the C ABI: passing `null` coerces to `0` (an expiry
+   * at instant 0), exactly as the sync surface does.
+   */
+  setTtl(key: Key, expiresAt: number): Promise<void>;
   getTtl(key: Key): Promise<number | null>;
   purgeExpired(now: number): Promise<number>;
 

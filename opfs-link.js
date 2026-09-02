@@ -28,11 +28,14 @@ export class WorkerLink {
   constructor(worker) {
     this.worker = worker;
     this.next = 1;
+    this.dead = false;
     this.pending = new Map(); // id -> { resolve, reject, onChunk }
     worker.onmessage = (ev) => this._onMessage(ev.data);
     worker.onerror = (ev) => {
       // Worker-level failures (module load error, uncaught error):
-      // reject everything in flight; the facade's open path surfaces it.
+      // mark the link dead (later sends reject instead of posting into
+      // a corpse), reject everything in flight.
+      this.dead = true;
       for (const { reject } of this.pending.values()) {
         reject(linkErr(18, `worker failed: ${ev.message ?? 'unknown error'}`));
       }
@@ -62,6 +65,9 @@ export class WorkerLink {
   }
 
   send(req, handlers = {}) {
+    if (this.dead) {
+      return Promise.reject(linkErr(18, 'worker is not running'));
+    }
     return new Promise((resolve, reject) => {
       const id = this.next;
       this.next += 1;
@@ -80,6 +86,7 @@ export class WorkerLink {
   }
 
   terminate() {
+    this.dead = true;
     this.worker.terminate();
   }
 }

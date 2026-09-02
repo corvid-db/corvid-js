@@ -49,33 +49,84 @@ function validateOpfsName(name) {
   }
 }
 
-// -- the CorvidFloat unwrap (SPEC §4.4) ---------------------------------------
+// -- the wire-value pass (SPEC §4.4) --------------------------------------------
 //
 // StructuredClone preserves primitive wrappers but drops own properties
 // and subclass identity, so a CorvidFloat would cross as an unmarked
 // boxed Number. The marker protocol's own plain-object form crosses
 // verbatim — unwrap every instance, at any depth, in every value that
 // rides the wire (documents, patches, CAS operands, predicate values).
-// Typed arrays and null pass through untouched.
+//
+// The same walk enforces the value mapping's input contract so both
+// hosts behave identically: Map/Set/Date, functions, symbols, and
+// CYCLIC structures reject with InvalidArgument (12) — exactly the
+// inputs the sync surface rejects at the wasm boundary (the typed-array
+// strictness note and the MAX_NESTING depth cap), instead of silently
+// storing `{}` or overflowing the stack before the wire is reached.
+// Plain class instances reconstruct as plain objects (equivalent to the
+// sync layer storing their own enumerable properties). Typed arrays and
+// null pass through untouched.
 
-function unwrapCorvidFloats(v) {
-  if (v === null || typeof v !== 'object') return v;
+function wireValue(v, seen) {
+  if (v === null) return v;
+  const t = typeof v;
+  if (t !== 'object') {
+    if (t === 'function' || t === 'symbol') {
+      throw err(12, `a ${t} is not a corvid value — use a plain form`);
+    }
+    return v;
+  }
   if (v instanceof CorvidFloat) return { __corvidFloat: v.__corvidFloat };
-  if (Array.isArray(v)) return v.map(unwrapCorvidFloats);
   if (v instanceof Uint8Array || v instanceof Float32Array) return v;
+  if (v instanceof Map || v instanceof Set || v instanceof Date) {
+    throw err(
+      12,
+      `a ${v.constructor?.name ?? 'host object'} is not a corvid value — use a plain form`,
+    );
+  }
+  if (Array.isArray(v)) {
+    if (seen.has(v)) throw err(12, 'cyclic value');
+    seen.add(v);
+    const out = v.map((x) => wireValue(x, seen));
+    seen.delete(v);
+    return out;
+  }
+  if (seen.has(v)) throw err(12, 'cyclic value');
+  seen.add(v);
   const out = {};
-  for (const k of Object.keys(v)) out[k] = unwrapCorvidFloats(v[k]);
+  for (const k of Object.keys(v)) out[k] = wireValue(v[k], seen);
+  seen.delete(v);
   return out;
 }
 
+/// The public entry: a fresh seen-set per top-level value. The chain-op
+/// path calls it inside a synchronous try (§4.4's timing contract);
+/// async-op rejections come from the async `_call` wrapper.
+function unwrapCorvidFloats(v) {
+  return wireValue(v, new Set());
+}
+
 // -- GC release (SPEC §4.5) ----------------------------------------------------
+//
+// Registered for collections, queries, AND the db itself: an abandoned
+// AsyncDb otherwise leaks its worker and with it the OPFS exclusive
+// lock (every cross-tab open of that name failing 19 until page
+// unload). The db's release runs the full close (teardown ack), then
+// terminates the link.
 
 const gcRegistry =
   typeof FinalizationRegistry === 'function'
     ? new FinalizationRegistry((held) => {
-        held.link
-          .send({ op: held.op, h: held.h, ch: held.ch ?? 0, a: [] })
-          .catch(() => {});
+        if (held.terminate) {
+          held.link
+            .send({ op: 'db.close', h: held.h, ch: 0, a: [] })
+            .catch(() => {})
+            .finally(() => held.link.terminate());
+        } else {
+          held.link
+            .send({ op: held.op, h: held.h, ch: held.ch ?? 0, a: [] })
+            .catch(() => {});
+        }
       })
     : null;
 
@@ -142,6 +193,12 @@ export class AsyncDb {
     this._h = h;
     this._nextHandle = h + 1;
     this._closed = false;
+    gcRegistry?.register(this, { link, h, terminate: true }, this);
+  }
+
+  /** @internal the §5.3 liveness gate: every facade of a closed db fails with code 1. */
+  _live() {
+    if (this._closed) throw err(1, 'database is closed');
   }
 
   /** @internal allocate a derived-handle id. */
@@ -153,7 +210,7 @@ export class AsyncDb {
 
   /** @internal one op; closed handles fail fast with code 1. */
   async _rpc(op, a, h = this._h, ch = 0) {
-    if (this._closed) throw err(1, 'database is closed');
+    this._live();
     return this._link.send({ op, h, ch, a });
   }
 
@@ -237,6 +294,7 @@ export class AsyncDb {
   async close() {
     if (this._closed) return;
     this._closed = true;
+    gcRegistry?.unregister(this);
     try {
       await this._link.send({ op: 'db.close', h: this._h, ch: 0, a: [] });
     } finally {
@@ -273,27 +331,40 @@ export class AsyncCollection {
   }
 
   async _call(method, ...args) {
-    if (this._closed) throw err(1, 'database is closed');
-    return this._db._rpc('coll.call', [method, ...args], this._h);
+    // Both closed states fail fast with code 1 — the §5.3 rule for
+    // every facade of a closed db, and this handle's own close. The
+    // async wrapper makes the wire-value pass REJECT (not throw):
+    // Map/Set/Date, functions, symbols, and cycles arrive here as
+    // InvalidArgument (12), matching the sync surface's wasm-boundary
+    // rejections instead of silently storing `{}`.
+    this._live();
+    return this._db._rpc(
+      'coll.call',
+      [method, ...args.map(unwrapCorvidFloats)],
+      this._h,
+    );
+  }
+
+  /** @internal both-closed gate. */
+  _live() {
+    if (this._closed) throw err(1, 'collection handle is closed');
+    this._db._live();
   }
 
   // mutations
 
   insert(key, doc) {
-    return this._call('insert', key, unwrapCorvidFloats(doc));
+    return this._call('insert', key, doc);
   }
 
   /** Bulk atomic insert (`insertMany`): one transaction; a violating pair rolls back the batch. */
   insertMany(entries) {
-    return this._call(
-      'insertMany',
-      entries.map(([k, d]) => [k, unwrapCorvidFloats(d)]),
-    );
+    return this._call('insertMany', entries);
   }
 
   /** Insert with an engine-generated key; resolves to the key. */
   insertAuto(doc) {
-    return this._call('insertAuto', unwrapCorvidFloats(doc));
+    return this._call('insertAuto', doc);
   }
 
   /**
@@ -314,12 +385,12 @@ export class AsyncCollection {
     if (next === undefined) next = null;
     // `current` is engine output (plain, already decoded) — no unwrap;
     // the single-writer model makes this get→CAS pair exact.
-    return this._call('compareAndSet', key, current, unwrapCorvidFloats(next));
+    return this._call('compareAndSet', key, current, next);
   }
 
   /** Merge the top-level fields of `patch` into the document at `key`. */
   patch(key, patch) {
-    return this._call('patch', key, unwrapCorvidFloats(patch));
+    return this._call('patch', key, patch);
   }
 
   /**
@@ -328,12 +399,7 @@ export class AsyncCollection {
    * Resolves to whether the write applied.
    */
   compareAndSet(key, expected, replacement) {
-    return this._call(
-      'compareAndSet',
-      key,
-      unwrapCorvidFloats(expected),
-      unwrapCorvidFloats(replacement),
-    );
+    return this._call('compareAndSet', key, expected, replacement);
   }
 
   /** Delete `key`; resolves to whether it existed. */
@@ -343,7 +409,7 @@ export class AsyncCollection {
 
   /** Delete every document matching `pred`; resolves to the count. */
   deleteWhere(pred) {
-    return this._call('deleteWhere', unwrapCorvidFloats(pred));
+    return this._call('deleteWhere', pred);
   }
 
   /** Delete a batch of keys; resolves to the removed count. */
@@ -354,7 +420,7 @@ export class AsyncCollection {
   // TTL
 
   insertWithTtl(key, doc, expiresAt) {
-    return this._call('insertWithTtl', key, unwrapCorvidFloats(doc), expiresAt);
+    return this._call('insertWithTtl', key, doc, expiresAt);
   }
 
   setTtl(key, expiresAt) {
@@ -362,7 +428,8 @@ export class AsyncCollection {
   }
 
   getTtl(key) {
-    return this._call('getTtl', key);
+    // The glue method is `ttl`; the public name matches the sync surface.
+    return this._call('ttl', key);
   }
 
   purgeExpired(now) {
@@ -382,23 +449,34 @@ export class AsyncCollection {
   /**
    * Stream with `cb(key, doc) => boolean|void`: rows arrive in chunks
    * from the worker; returning `false` stops the walk early (not an
-   * error). Resolves to the rows visited. Memory stays bounded by the
-   * chunk, not the collection.
+   * error). A THROWING callback cancels the walk and rejects with the
+   * callback's own error — the sync surface's propagation, kept
+   * identical on both hosts. Resolves to the rows visited; memory
+   * stays bounded by the chunk, not the collection.
    */
   async scanEach(cb) {
+    this._live();
     let visited = 0;
+    let thrown = null;
     await this._db._link.send(
       { op: 'coll.scanEach', h: this._h, ch: 0, a: [] },
       {
         onChunk: async (rows) => {
           for (const row of rows) {
+            if (thrown) return 'cancel';
             visited += 1;
-            if (cb(row.key, row.doc) === false) return 'cancel';
+            try {
+              if (cb(row.key, row.doc) === false) return 'cancel';
+            } catch (e) {
+              thrown = e; // surfaced after the walk unwinds
+              return 'cancel';
+            }
           }
           return 'cont';
         },
       },
     );
+    if (thrown) throw thrown;
     return visited;
   }
 
@@ -515,6 +593,9 @@ export class AsyncCollection {
     if (this._closed) return;
     this._closed = true;
     gcRegistry?.unregister(this);
+    // A closed db (or its terminated worker) must reject, not hang:
+    // the §5.3 rule covers every facade op after db.close().
+    this._db._live();
     await this._db._link.send({ op: 'coll.close', h: this._h, ch: 0, a: [] });
   }
 
@@ -545,11 +626,21 @@ export class AsyncQuery {
 
   _chainOp(method, ...args) {
     if (this._done) throw err(1, 'query handle is closed');
-    this._chain.push(
-      this._db._link.send(
-        { op: 'query.op', h: this._h, ch: this._coll._h, a: [method, ...args] },
-      ),
-    );
+    this._db._live(); // a closed db rejects here — synchronously
+    // §4.4's timing contract: wire-value violations (functions,
+    // symbols, Map/Set/Date, cycles) throw AT THE ENQUEUE CALL, not
+    // as terminal poison.
+    const wired = args.map(unwrapCorvidFloats);
+    const p = this._db._link.send({
+      op: 'query.op',
+      h: this._h,
+      ch: this._coll._h,
+      a: [method, ...wired],
+    });
+    // A dropped poisoned chain must not leave an unhandled rejection;
+    // Promise.all below still sees the failure through `p`.
+    p.catch(() => {});
+    this._chain.push(p);
     return this;
   }
 
@@ -558,11 +649,16 @@ export class AsyncQuery {
     this._released = true;
     this._done = true;
     gcRegistry?.unregister(this);
+    this._db._live();
     await this._db._link.send({ op: 'query.close', h: this._h, ch: this._coll._h, a: [] });
   }
 
   async _terminal(method, ...args) {
-    if (this._done) throw err(1, 'query handle is closed');
+    // close() is exempt from BOTH guards: after a terminal (consumed
+    // builder) and after a poisoned chain, it still resolves — the
+    // sync twin's idempotent close, kept for `await using`.
+    if (this._done && method !== 'close') throw err(1, 'query handle is closed');
+    this._db._live();
     try {
       // Poisoning (§4.4): chain replies arrive before the terminal's
       // (FIFO), so awaiting them first surfaces the chain's own error.
@@ -589,10 +685,10 @@ export class AsyncQuery {
   }
 
   filter(pred) {
-    return this._chainOp('filter', unwrapCorvidFloats(pred));
+    return this._chainOp('filter', pred); // unwrapped by _chainOp's pass
   }
 
-  vector(field, query, k, metric) {
+  vector(field, query, k, metric = 'cosine') {
     return this._chainOp('vector', field, query, k, metric);
   }
 

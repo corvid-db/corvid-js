@@ -321,6 +321,8 @@ order — with three deliberate, specified exceptions:
    stops (not an error); resolves to the rows visited. Memory stays
    bounded by the chunk, not the collection.
 3. Chain-op error timing — see §4.4.
+4. `update` resolves to the compare-and-set's boolean (applied /
+   not) — the engine CAS result, where the sync form returns void.
 
 Everything else is a 1:1 async mirror of `index.d.ts` — including the
 `name` getter (facade-local and **synchronous**, set at
@@ -513,12 +515,12 @@ outside the frozen table is ever thrown; the async layer only *maps*.
 
 ```ts
 // main → worker
-{ t:'req', id:number, op:string, h:number, a:unknown[] }   // a: raw JS args, StructuredClone'd
-{ t:'cont', id:number } | { t:'cancel', id:number }        // scanEach backpressure/stop
+{ t:'req', id:number, op:string, h:number, ch?:number, a:unknown[] } // a: raw JS args, StructuredClone'd; ch: a second handle id when the op needs one (coll.create's new collection id; every query.* op's owning collection id) — handle ids are allocated by the CALLER (the facade)
+{ t:'cont', id:number } | { t:'cancel', id:number }                 // scanEach backpressure/stop
 // worker → main
-{ t:'ok',   id:number, v:unknown }                          // v may transfer (dump bytes)
-{ t:'err',  id:number, c:number, m:string }                 // frozen code + message
-{ t:'chunk',id:number, rows:[{key,doc}] }                   // scanEach pages
+{ t:'ok',   id:number, v:unknown }                                   // v may transfer (dump bytes)
+{ t:'err',  id:number, c:number, m:string }                          // frozen code + message
+{ t:'chunk',id:number, rows:[{key,doc}] }                            // scanEach pages
 ```
 
 Request ids are unique per worker (a counter); replies carry the
