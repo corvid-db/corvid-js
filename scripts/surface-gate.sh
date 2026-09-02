@@ -38,7 +38,7 @@ ENGINE_REPO="corvid-db/corvid"
 # boundary (wasm has no filesystem; OPFS is a decided, trigger-based
 # deferral — docs/PLAN.md §5) retires Db::open(file)/dump/load/
 # load_with_renames/backup from the MAPPED column into N/A.
-NA_BASELINE=160
+NA_BASELINE=164
 
 # ---- locate the engine pin ------------------------------------------------
 pin=""
