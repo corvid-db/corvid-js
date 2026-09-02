@@ -16,6 +16,7 @@ use wasm_bindgen::prelude::*;
 mod collection;
 mod db;
 mod error;
+mod opfs;
 mod pred;
 mod query;
 mod value;

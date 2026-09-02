@@ -16,8 +16,8 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "corvid-db"
-version = "0.3.2"
-source = "git+https://github.com/corvid-db/corvid.git?tag=v0.3.4#b726ac5a1ebace9f94dc12007a4e06927241cf4c"
+version = "0.3.4"
+source = "git+https://github.com/corvid-db/corvid.git?tag=v0.3.4#3b46c3b1e55b163ba059af759fbbf5219aceae37"
 dependencies = [
  "redb",
  "thiserror",
@@ -29,6 +29,7 @@ version = "0.1.0"
 dependencies = [
  "corvid-db",
  "js-sys",
+ "redb",
  "wasm-bindgen",
 ]
 

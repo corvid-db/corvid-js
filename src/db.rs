@@ -4,12 +4,12 @@
 //! mirrored: `compact` needs the counter at exactly 1 — the db
 //! itself — AND sole `Arc` ownership, else `CORVID_E_BUSY`).
 //!
-//! In-memory per session — the shipped persistence boundary (the
-//! recorded DESIGN deferral): wasm32-unknown-unknown has no
-//! filesystem, so `Db::open(path)`'s file-backed store, and with it
-//! dump/load/backup, are not constructible here. OPFS-backed
-//! persistence is a decided, trigger-based future addition (README,
-//! docs/PLAN.md §5) — this class opens exactly `Db::open_in_memory`.
+//! In-memory per session remains the SYNC surface's boundary, but the
+//! persistence boundary is now implemented: `openOpfs(handleId)`
+//! opens the engine over an OPFS sync handle held by the JS host
+//! (`opfs-shim.js` + the Worker runtime; docs/OPFS-SPEC.md). The
+//! in-memory constructor stays the default for the sync OOP layer;
+//! the OPFS form feeds the async surface.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,18 +45,35 @@ pub(crate) fn release(counter: &Counter) {
 
 #[wasm_bindgen]
 impl WasmDb {
-    /// Open a private, in-memory database (the wasm persistence
-    /// boundary — see the module docs).
+    /// Open a private, in-memory database (the sync surface's default;
+    /// see the module docs).
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<WasmDb, JsValue> {
         let db = Db::open_in_memory().map_err(CorvidErr::from)?;
-        let counter: Counter = Arc::new(AtomicUsize::new(1));
-        Ok(WasmDb {
+        Ok(Self::from_engine(db))
+    }
+
+    /// Open a persistent database over a sync-handle id registered in
+    /// the host's `corvidOpfs` shim (docs/OPFS-SPEC.md §3.3). The host
+    /// (Worker) owns the `FileSystemSyncAccessHandle`; `install` must
+    /// have been called with the wasm memory before this. Handle
+    /// release is deterministic: dropping the last reference to the
+    /// engine `Db` fires the backend's `close`, which flushes and
+    /// closes the handle and unregisters the id.
+    #[wasm_bindgen(js_name = openOpfs)]
+    pub fn open_opfs(handle_id: u32) -> Result<WasmDb, JsValue> {
+        let db = Db::open_with_backend(crate::opfs::OpfsBackend::new(handle_id))
+            .map_err(CorvidErr::from)?;
+        Ok(Self::from_engine(db))
+    }
+
+    fn from_engine(db: Db) -> WasmDb {
+        WasmDb {
             inner: Mutex::new(Some(DbInner {
                 db: Arc::new(db),
-                counter,
+                counter: Arc::new(AtomicUsize::new(1)),
             })),
-        })
+        }
     }
 
     pub(crate) fn with_inner<T>(&self, f: impl FnOnce(&DbInner) -> CResult<T>) -> CResult<T> {
@@ -104,8 +121,75 @@ impl WasmDb {
 
     /// Close the handle (idempotent). Derived handles may legitimately
     /// outlive it — the engine lives until the last handle drops.
+    /// For an OPFS db this is the deterministic handle release: the
+    /// engine `Db` drops (when the last derived handle is gone too),
+    /// the backend's `close` fires, the sync handle flushes, closes,
+    /// and unregisters (SPEC §5.3's ordering guarantee begins here).
     pub fn close(&self) {
         let _ = self.inner.lock().unwrap().take();
+    }
+
+    /// The v2 dump stream as bytes — the portable whole-database form
+    /// (feature-configuration-safe, unlike a physical backup; SPEC
+    /// §5.5). Returned as a `Uint8Array` (a fresh copy out of wasm
+    /// memory — safe to transfer across workers).
+    pub fn dump(&self) -> Result<Vec<u8>, JsValue> {
+        self.with_inner(|inner| {
+            let mut out = Vec::new();
+            inner.db.dump(&mut out).map_err(CorvidErr::from)?;
+            Ok(out)
+        })
+        .map_err(JsValue::from)
+    }
+
+    /// Replay a dump stream into this database (merge semantics — the
+    /// engine's `load` contract; see `Db::load` in the engine docs).
+    pub fn load(&self, bytes: Vec<u8>) -> Result<(), JsValue> {
+        self.with_inner(|inner| inner.db.load(&bytes[..]).map_err(CorvidErr::from))
+            .map_err(JsValue::from)
+    }
+
+    /// `load` with a collection-rename map, crossing as two parallel
+    /// arrays (wasm-bindgen has no tuple support — SPEC §3.3); the
+    /// facade's `Record<string, string>` is decomposed before this
+    /// call. Keys and values must be the same length.
+    #[wasm_bindgen(js_name = loadWithRenames)]
+    pub fn load_with_renames(
+        &self,
+        bytes: Vec<u8>,
+        rename_keys: Vec<String>,
+        rename_values: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.with_inner(|inner| {
+            if rename_keys.len() != rename_values.len() {
+                return Err(CorvidErr::argument(
+                    "loadWithRenames: rename keys and values must be parallel arrays",
+                ));
+            }
+            let renames: std::collections::BTreeMap<String, String> =
+                rename_keys.into_iter().zip(rename_values).collect();
+            inner
+                .db
+                .load_with_renames(&bytes[..], &renames)
+                .map_err(CorvidErr::from)
+        })
+        .map_err(JsValue::from)
+    }
+
+    /// Physical backup into a second registered sync handle (SPEC
+    /// §5.5): a raw-table copy, feature-configuration-sensitive like
+    /// the native `backup`. The CALLER owns the target's
+    /// existence-check and partial-target cleanup — the host created
+    /// the target handle, only it can remove the file.
+    #[wasm_bindgen(js_name = backupOpfs)]
+    pub fn backup_opfs(&self, target_handle_id: u32) -> Result<(), JsValue> {
+        self.with_inner(|inner| {
+            inner
+                .db
+                .backup_with_backend(crate::opfs::OpfsBackend::new(target_handle_id))
+                .map_err(CorvidErr::from)
+        })
+        .map_err(JsValue::from)
     }
 }
 
