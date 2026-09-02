@@ -120,11 +120,12 @@ impl WasmDb {
     }
 
     /// Close the handle (idempotent). Derived handles may legitimately
-    /// outlive it — the engine lives until the last handle drops.
-    /// For an OPFS db this is the deterministic handle release: the
-    /// engine `Db` drops (when the last derived handle is gone too),
-    /// the backend's `close` fires, the sync handle flushes, closes,
-    /// and unregisters (SPEC §5.3's ordering guarantee begins here).
+    /// outlive it — the engine lives until the last handle drops (an
+    /// unclosed JS collection handle waits on GC finalization). For an
+    /// OPFS db this is the deterministic handle release: the engine
+    /// `Db` drops, the backend's `close` fires, and the shim
+    /// unregisters the id, flushes, and closes the sync handle
+    /// (SPEC §5.3's ordering guarantee begins here).
     pub fn close(&self) {
         let _ = self.inner.lock().unwrap().take();
     }

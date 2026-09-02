@@ -235,6 +235,68 @@ test('register rejects legacy async sync-handles cleanly', () => {
   expect(() => corvidOpfs.register(legacy)).toThrow(/legacy asynchronous/);
 });
 
+test('short reads: the shim loop fills across partial returns and hits EOF loudly', () => {
+  // B3: MDN does not document partial-read behavior — the shim must
+  // loop until the buffer is full and treat a 0-byte read as EOF.
+  const handle = fakeHandle();
+  const fullRead = handle.read.bind(handle);
+  let calls = 0;
+  handle.read = (buf, opts) => {
+    calls += 1;
+    // Serve at most 8 bytes per call — redb pages are far larger, so
+    // every real read crosses several calls before the loop completes.
+    const capped = { length: Math.min(buf.length, 8) };
+    const tmp = new Uint8Array(capped.length);
+    const n = fullRead(tmp, opts);
+    buf.set(tmp.subarray(0, n), 0);
+    return n;
+  };
+  const id = corvidOpfs.register(handle);
+  const db = glue.WasmDb.openOpfs(id);
+  db.collection('docs').insert('k', { n: 1 });
+  expect(db.collection('docs').get('k')).toEqual({ n: 1 });
+  expect(calls).toBeGreaterThan(1); // the loop genuinely multiplexed
+  db.close();
+
+  // Reading past the end of the file is a clean UnexpectedEof-flavored
+  // failure: a backend whose bytes were truncated under it must error,
+  // never hand back zero pages.
+  const handle2 = fakeHandle();
+  const id2 = corvidOpfs.register(handle2);
+  const db2 = glue.WasmDb.openOpfs(id2);
+  db2.collection('docs').insert('k', { n: 1 });
+  db2.close();
+  handle2.data = handle2.data.subarray(0, 64); // simulate torn storage
+  const id3 = corvidOpfs.register(handle2);
+  let err = null;
+  try {
+    const db3 = glue.WasmDb.openOpfs(id3);
+    db3.collection('docs').get('k');
+    db3.close();
+  } catch (e) {
+    err = e;
+  }
+  // redb refuses the truncated file somewhere in open/read — any
+  // frozen-table failure satisfies "loudly"; silence would not.
+  expect(err).toBeInstanceOf(Error);
+});
+
+test('overshooting reads are refused by the backend, not misinterpreted', () => {
+  // B4's sibling on the read side: a handle reporting MORE bytes than
+  // requested must trip the backend's count check (n != len).
+  const handle = fakeHandle();
+  handle.read = (buf) => buf.length + 16; // lies about the transfer
+  const id = corvidOpfs.register(handle);
+  let err = null;
+  try {
+    const db = glue.WasmDb.openOpfs(id);
+    db.close();
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+});
+
 test('openOpfs on an unknown handle id fails cleanly', () => {
   // The shim's unknown-id error crosses redb's OPEN path, which wraps
   // it as a DatabaseError — engine code 1, with the host text.

@@ -46,8 +46,11 @@ extern "C" {
 
 /// A shim error → the io error redb sees. The host shim stringifies
 /// DOMExceptions as `"<Name>: <message>"`; kinds are assigned by that
-/// prefix (SPEC §3.2: quota → `StorageFull`, EOF → `UnexpectedEof`,
-/// everything else carries the DOM text verbatim).
+/// prefix: quota → `StorageFull`, the shim's own end-of-file signal →
+/// `UnexpectedEof` (this one is not a DOMException — it originates in
+/// the shim's fill loop per SPEC §1.3-B3 — which is why §3.2's
+/// "everything else" clause does not cover it), everything else
+/// carries the DOM text verbatim.
 fn shim_err(e: JsValue) -> io::Error {
     // The shim throws Error objects whose MESSAGE carries the wire form
     // ("QuotaExceededError: ..."); a bare string crosses as a string.
@@ -74,8 +77,10 @@ fn shim_err(e: JsValue) -> io::Error {
     }
 }
 
-/// The largest offset that survives the f64 wire exactly.
-const MAX_OFFSET: u64 = 1 << 53;
+/// The largest offset/length value that crosses the f64 wire AND the
+/// JS safe-integer range (2^53 − 1 — the shim's Number.isSafeInteger
+/// checks cap at the same bound).
+const MAX_OFFSET: u64 = (1 << 53) - 1;
 
 /// Convert an offset/length pair to the shim wire form, refusing what
 /// cannot cross exactly.

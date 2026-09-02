@@ -204,8 +204,10 @@ internals require; `catch` turns a JS `throw` into `Err(JsValue)`):
 `#[wasm_bindgen(catch)]`, so a JS `throw` crosses as `Err(JsValue)`
 and a clean return carries only the byte counts above — there is no
 sentinel-return convention. The Rust side maps the stringified
-`DOMException.name + ": " + message` to `std::io::Error` with one
-defined kind pair: `QuotaExceededError` → `ErrorKind::StorageFull`;
+`DOMException.name + ": " + message` to `std::io::Error` with defined
+kinds: `QuotaExceededError` → `ErrorKind::StorageFull`; the shim's
+own end-of-file signal (the `UnexpectedEof:` prefix from its fill
+loop, §1.3-B3 — not a DOMException) → `ErrorKind::UnexpectedEof`;
 every other failure → `ErrorKind::Other` with the DOM text carried.
 These surface through redb as `StorageError`, through the engine as
 `Error::Storage`/`Error::Io` — code-true end to end (§6).

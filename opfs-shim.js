@@ -113,7 +113,9 @@ export const corvidOpfs = {
       done += n;
     }
     if (done !== len) {
-      throw new Error(`Io: corvidOpfs.write: short write ${done} of ${len}`);
+      // Only reachable when a handle OVERSHOOTS (reports more than
+      // requested) — the Rust side refuses the mismatched count too.
+      throw new Error(`Io: corvidOpfs.write: byte count mismatch (${done} of ${len})`);
     }
     return done;
   },
@@ -141,12 +143,24 @@ export const corvidOpfs = {
     const h = this._handles.get(id);
     if (!h) return; // SPEC §5.2: no-op on unregistered ids
     this._handles.delete(id);
+    let failure = null;
     try {
       h.flush();
+    } catch (e) {
+      failure = e; // the original error wins; close anyway below
+    }
+    try {
       h.close();
     } catch (e) {
-      const name = e && typeof e.name === 'string' ? e.name : 'Error';
-      const msg = e && typeof e.message === 'string' ? e.message : String(e);
+      failure = failure ?? e;
+    }
+    if (failure) {
+      const name =
+        failure && typeof failure.name === 'string' ? failure.name : 'Error';
+      const msg =
+        failure && typeof failure.message === 'string'
+          ? failure.message
+          : String(failure);
       throw new Error(`${name}: ${msg}`);
     }
   },
