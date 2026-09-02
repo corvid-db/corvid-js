@@ -102,7 +102,7 @@ The binding replays the engine's **golden suite** — the same fixture
 files the C ABI smoke harness runs — against its public API on every
 CI run: 230/230 executable lines across the six in-memory fixture
 files (`values`, `mutations`, `queries`, `schema`, `graph`, `geo`),
-including the v0.3.1 `VMAP_KEYS` and `PHRASE` additions. The two
+including the v0.3.0 `VMAP_KEYS` and `PHRASE` additions. The two
 file-backed fixture files (`persist.txt`, `admin.txt`) are not
 vendored — their scenarios are exactly the deferred persistence
 boundary; their in-memory-executable contracts (the compact

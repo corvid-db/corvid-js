@@ -31,7 +31,7 @@ calls, no async anywhere on the data path).
 
 The golden suite: **230/230 fixture lines** across the 6 vendored
 files (values 46, mutations 71, queries 46, schema 28, graph 20, geo
-19 — including the v0.3.1 additions `VMAP_KEYS` and `PHRASE`), every
+19 — including the v0.3.0 additions `VMAP_KEYS` and `PHRASE`), every
 line dispatched and every expectation checked through the OOP surface,
 with the same independent pre-scan discipline as the C harness (a
 skipped line diverges `executed` from the counted total instead of
