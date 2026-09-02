@@ -23,7 +23,7 @@ js-sys = "0.3"
 # binding pins exact engine tags; corvid is not on crates.io). The
 # engine's own corvid-wasm size harness proves this dep graph links
 # clean on wasm32-unknown-unknown within the 2 MB gzipped budget.
-corvid = { git = "https://github.com/corvid-db/corvid.git", tag = "v0.3.0" }
+corvid = { git = "https://github.com/corvid-db/corvid.git", tag = "v0.3.1" }
 
 # Size-optimized release profile for the shipped wasm bundle — the same
 # shape the engine's corvid-wasm harness measures under (its
