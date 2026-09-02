@@ -210,12 +210,17 @@ bytes) gzipped**, enforced by `scripts/size-gate.sh` in CI.
 
 - Bootstrap measurement: **362,985 bytes gzipped** (1,206,886 raw) —
   34% of budget, 5.6x under the engine's 2 MB reference.
+- OPFS-program measurement (backend + dump/load paths in, T4):
+  **379,304 bytes gzipped** (1,269,318 raw) — 36% of budget.
 - `wasm-opt` is OFF, by measurement: a binaryen `-O`/`-Oz` pass over
-  the cargo output gzips LARGER (400/408 KB vs 363 KB) — the budget
-  is on the gzipped size, the same unit the engine's gate uses, and
-  cargo's `opt-level="z"` + LTO + `codegen-units=1` + `strip` profile
-  (the engine's own `wasm-release` shape) wins it. Recorded here so
-  the call is revisitable when binaryen changes.
+  the cargo output gzips LARGER (400/408 KB vs 363 KB at bootstrap) —
+  the budget is on the gzipped size, the same unit the engine's gate
+  uses, and cargo's `opt-level="z"` + LTO + `codegen-units=1` +
+  `strip` profile (the engine's own `wasm-release` shape) wins it.
+  Re-measured at the OPFS program's T4 with binaryen 132 (`--enable-
+  bulk-memory --enable-nontrapping-float-to-int`): -O → 418,313 gz,
+  -Oz → 420,521 gz — the gap WIDENED (+10/11%); the ruling stands
+  with more margin, and the OPFS backend code did not change it.
 
 ## 7. Where the suite runs (and why that is legitimate)
 
