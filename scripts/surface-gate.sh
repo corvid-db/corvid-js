@@ -36,9 +36,9 @@ ENGINE_REPO="corvid-db/corvid"
 # The committed N/A baseline for THIS binding (see (c) above). It is 4
 # higher than corvid-node's 156 at the same pin: the wasm persistence
 # boundary (wasm has no filesystem; OPFS is a decided, trigger-based
-# deferral — docs/PLAN.md §5) retires Db::open(file)/dump/load/
-# load_with_renames/backup from the MAPPED column into N/A.
-NA_BASELINE=164
+# The N/A baseline: OPFS persistence (docs/OPFS-SPEC.md) flipped the
+# nine file-op/backend-seam rows to MAPPED (ASYNC) — 164 - 9 = 155.
+NA_BASELINE=155
 
 # ---- locate the engine pin ------------------------------------------------
 pin=""

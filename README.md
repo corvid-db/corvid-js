@@ -4,27 +4,19 @@ The browser / Web Worker binding for
 [corvid](https://github.com/corvid-db/corvid) — the embedded database
 with vector (HNSW), full-text (BM25 + CJK bigrams), hybrid RRF/MMR
 retrieval, graph edges, and geo — compiled to WebAssembly and exposed
-as **idiomatic, synchronous OOP**: `Db`, `Collection`, a fluent
-`Query` builder, and `field()` predicates. No SQL, no JSON, no
-serialization on the data path; values cross the boundary natively.
+as **idiomatic OOP**: a synchronous in-memory surface (`Db`,
+`Collection`, a fluent `Query` builder, `field()` predicates) plus an
+**async OPFS-persistent surface** (`openOpfs()` / `AsyncDb`) hosted in
+a dedicated Worker. No SQL, no JSON, no serialization on the data
+path; values cross the boundary natively.
 
-**The persistence boundary, stated plainly: a `Db` is in-memory per
-session.** wasm has no filesystem, so nothing survives a page reload
-today — OPFS-backed persistence is a *decided, trigger-based* future
-addition (see [docs/PLAN.md §5](docs/PLAN.md)). Everything else the
-engine does — every index family, schemas, TTL, graph, geo, hybrid
-queries — works and is pinned by the engine's golden fixtures.
+- Engine pin: [`corvid-db` git dep](Cargo.toml), exact release tags
+  per the bindings program (the engine PACKAGE is corvid-db — lib ident
+  `corvid`).
+- npm: **live** — `npm install corvid-js` (published via the repo's
+  release workflow; the prebuilt wasm ships in the package).
 
-- Engine pin: [`corvid-db` git dep, tag `v0.3.4`](Cargo.toml) (exact
-  release tags, per the bindings program; the engine PACKAGE is
-  corvid-db — lib ident `corvid` — as of v0.3.4).
-- Install status: **pending first npm publish** — 0.3.2 is fully staged
-  (wasm built against the v0.3.4 pin, suite + size/surface gates green,
-  `npm pack` verified) but the publishing npm account enforces 2FA, so
-  the publish needs a one-time password; build from source
-  meanwhile (below).
-
-## Use (browsers / bundlers)
+## Use (browsers / bundlers) — in-memory, synchronous
 
 ```js
 import { Db, field, init } from 'corvid-js';
@@ -51,9 +43,49 @@ const rows = docs
   .limit(2)
   .run(); // [{ key, doc, score }]
 
-// Phrase search (v0.3.0): consecutive in-order tokens, BM25 scores.
+// Phrase search: consecutive in-order tokens, BM25 scores.
 docs.phraseSearch('body', 'embedded database', 10);
 ```
+
+## Use (browsers) — persistent, async (OPFS)
+
+```js
+import { openOpfs, field } from 'corvid-js';
+
+const db = await openOpfs('notes');   // one OPFS file, one Worker
+const docs = await db.collection('docs');
+
+await docs.insert('k1', { body: 'survives reloads', n: 1 });
+
+const rows = await docs
+  .query()
+  .filter(field('n').ge(1))
+  .run();
+
+await docs.close();
+await db.close();   // the OPFS lock frees the moment this resolves
+```
+
+Every `AsyncDb`/`AsyncCollection`/`AsyncQuery` method returns a
+Promise and mirrors the sync surface (the three documented deviations:
+`name` is a sync getter, `update(key, fn)` composes get→fn→CAS — exact
+under OPFS single-writer — and `scanEach` streams in chunks). Also on
+the async surface: `dump()`/`load()`/`loadWithRenames()` (portable
+byte streams), `backupTo(name)` (physical copy), and the storage
+trio `storageEstimate()` / `requestPersistentStorage()` /
+`isPersistentStorage()`.
+
+**Single writer, by design.** OPFS grants the database file
+exclusively per origin: a second tab's `openOpfs` of an open name
+rejects with `Busy` (19). The lock frees the moment `close()`
+resolves.
+
+**Storage is evictable unless persisted.** Browser storage under
+pressure is evicted whole-origin (LRU); Safari may additionally evict
+script-created data after 7 idle days. `openOpfs` requests persistent
+storage by default (best-effort — check `isPersistentStorage()`), and
+`storageEstimate()` monitors usage (deliberately imprecise, per
+platform design).
 
 ## Use (Node — tests, tooling, CLIs)
 
@@ -64,7 +96,8 @@ const db = new Db();
 ```
 
 The node entry loads the same wasm binary browsers do; every call is
-identical.
+identical. The async OPFS surface is browser-only (no binding is
+exported under Node — OPFS and Web Workers do not exist there).
 
 ## The value mapping
 
@@ -83,17 +116,22 @@ canonicalize across the JS↔wasm Number boundary (`-0.0`, `±inf` are
 exact; vector elements keep their f32 bits). Keys are strings (UTF-8)
 or Uint8Arrays. `Object.keys()` of a mapped document enumerates the
 engine's ascending key-byte order (the v0.3.0 `map_keys` surface).
+The async surface additionally rejects `Map`/`Set`/`Date`, functions,
+symbols, and cyclic values with `InvalidArgument` (12) before they
+cross the worker boundary.
 
 Errors are `CorvidError` (`e.code` = the C ABI's frozen 0–19 table,
-`e.message` = the engine text). Everything is synchronous — no
-callbacks, no promises on the data path.
+`e.message` = the engine text). The sync surface is fully synchronous;
+the async surface is fully Promise-based.
 
 ## Build from source
 
 ```sh
-npm install            # wasm-pack wrapper deps + vitest (Rust >= 1.88 + wasm32-unknown-unknown target required)
+npm install            # wasm-pack wrapper deps + vitest + playwright (Rust >= 1.88 + wasm32 target)
 npm run build          # wasm-pack build --release --target web  -> pkg/
-npm test               # the golden suite (230 fixture lines) + regressions
+npm test               # the golden suite (230 lines) + regressions + OPFS suites
+npm run test:browser   # the golden suite in real Chromium (await init())
+npm run test:e2e       # async OPFS fixtures + reload/cross-tab (Playwright)
 npm run size-gate      # gzipped wasm <= 1 MiB (engine reference: 2 MiB)
 npm run surface-gate   # docs/SURFACE.tsv vs the pinned engine surface
 npm run examples       # the six-example tour
@@ -104,15 +142,16 @@ npm run lint           # cargo fmt --check + clippy -D warnings
 
 The binding replays the engine's **golden suite** — the same fixture
 files the C ABI smoke harness runs — against its public API on every
-CI run: 230/230 executable lines across the six in-memory fixture
-files (`values`, `mutations`, `queries`, `schema`, `graph`, `geo`),
-including the v0.3.0 `VMAP_KEYS` and `PHRASE` additions. The two
-file-backed fixture files (`persist.txt`, `admin.txt`) are not
-vendored — their scenarios are exactly the deferred persistence
-boundary; their in-memory-executable contracts (the compact
-quiescence gate, collections listing, session durability) are pinned
-by `test/regressions.spec.ts`. The suite runs under node's wasm
-runtime against the same binary browsers load (docs/PLAN.md §7).
+CI run: **267/267 executable lines across all eight fixture files**.
+The six in-memory files (`values`, `mutations`, `queries`, `schema`,
+`graph`, `geo`; 230 lines) run against the sync surface — in Node AND
+in a real browser (`await init()`, same spec, unchanged). The two
+file-backed files (`persist.txt`, `admin.txt`; 37 lines) run against
+the async OPFS surface in Chromium end to end: real Worker, real OPFS
+file, real postMessage. Browser-only contracts are pinned too:
+persistence across a real page reload, and the cross-tab single-writer
+`Busy` with the lock freeing exactly when `close()` resolves
+(docs/OPFS-SPEC.md §8).
 
 Six runnable examples (`examples/`) — quickstart, hybrid, vector
 index families, text+CJK+phrase, graph, geo — execute on every CI leg
@@ -123,14 +162,21 @@ loader line differs).
 
 ```
 src/            the wasm crate (wasm-bindgen classes over the engine)
-index.js        the OOP surface (public ESM entry, browsers/bundlers)
-node.mjs        the Node entry (synchronous init, re-exports the surface)
-index.d.ts      handwritten public types
+index.js        the sync OOP surface (public ESM entry, browsers/bundlers)
+opfs-async.js   the async facade (openOpfs / AsyncDb / AsyncCollection / AsyncQuery)
+opfs-worker.js  the Dedicated Worker runtime (engine + OPFS sync handles)
+opfs-rpc.js     the RPC dispatcher both hosts run (worker + tests)
+opfs-link.js    the transports (WorkerLink over postMessage; DirectLink in-process)
+opfs-shim.js    the host side of the OPFS storage backend
+node.mjs        the Node entry (synchronous init, sync surface only)
+index.d.ts      handwritten public types (sync + async)
 pkg/            wasm-pack output (built, not committed)
-docs/PLAN.md    architecture ruling, value contract, budget, deferrals
-docs/SURFACE.tsv  every engine construct: mapped here or N/A + reason
+docs/PLAN.md    architecture ruling, value contract, budget
+docs/OPFS-SPEC.md  the persistence binding contract (review-gated)
+docs/SURFACE.tsv   every engine construct: mapped here or N/A + reason
 scripts/        size-gate.sh, surface-gate.sh
-test/           golden.spec.ts (+ vendored fixtures), regressions.spec.ts
+test/           golden + regressions + opfs backend + async facade
+test/browser-e2e/  the Playwright leg (fixtures, reload, cross-tab)
 ```
 
 License: MIT.
