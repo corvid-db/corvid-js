@@ -1,0 +1,89 @@
+name: Release npm
+
+# The corvid-js publish flow: a tag push (vX.Y.Z — must equal package.json's
+# version) rebuilds the wasm package exactly the way ci.yml's test/package
+# jobs do (wasm-pack --release --target web + the size gate + an npm pack
+# listing), publishes corvid-js to the npm registry, then verifies the
+# publish with `npm view`.
+#
+# Requires the NPM_TOKEN secret (an automation token of the publishing
+# account — the same arrangement corvid-node's release workflow uses).
+# One-time setup (see scripts/bindings/README.md in the engine repo):
+#   gh secret set NPM_TOKEN -R corvid-db/corvid-js
+#
+# Dry-run (no publishing, e.g. after touching this file): dispatch the
+# workflow manually with `dry_run` checked — build, size gate, pack
+# listing, and version verification all run; `npm publish` is skipped.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build + pack + verify, but skip the npm publish step
+        type: boolean
+        default: false
+
+permissions: {}
+
+# Never cancel mid-run: a re-pushed tag queues behind the in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build wasm + publish corvid-js
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+      # npm install, not npm ci: same reason as ci.yml — devDependencies
+      # resolution stays lock-guided without hard-failing on fresh clones.
+      - run: npm install
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Build the wasm package (the ci build path)
+        run: npm run build
+      - name: Size gate (gzipped wasm <= 1 MiB; engine reference 2 MiB)
+        run: ./scripts/size-gate.sh
+      - name: Package listing (the files npm publish would ship)
+        run: npm pack --dry-run
+      - name: Tag must match the package.json version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # no tag context on dispatch; the equality is enforced on tag pushes
+            echo "dispatch (dry_run=${{ inputs.dry_run }}): package.json version ${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "tag: ${GITHUB_REF_NAME} (version part: ${TAG}), package.json version: ${VERSION}"
+            if [ "$TAG" != "$VERSION" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}"
+              exit 1
+            fi
+          fi
+      - name: "dry-run: publish skipped"
+        if: inputs.dry_run == true
+        run: >
+          echo "dry-run: publish skipped — wasm build, size gate, npm pack
+          listing, and version verification all ran; nothing published."
+      - name: Publish corvid-js to npm
+        if: inputs.dry_run != true
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify the publish (npm view)
+        if: inputs.dry_run != true
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          npm view "corvid-js@$VERSION" version dist.tarball
