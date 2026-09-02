@@ -11,12 +11,15 @@
 // closes.
 //
 // NO TOP-LEVEL AWAIT, deliberately: `self.onmessage` is registered
-// synchronously and requests queue until boot completes. A message
+// synchronously and EVERY request flows through one queue — a message
 // posted while a module worker is still evaluating a top-level await
 // can be silently DROPPED (a long-standing engine behavior, observed
 // in Chromium), which turned every early openOpfs into a hang — found
-// by the browser conformance leg. The queue-then-drain shape below is
-// the standard fix and keeps arrival order intact.
+// by the browser conformance leg. Routing all reqs through the queue
+// (not just pre-boot ones) is what makes §7.3's strict arrival order a
+// guarantee rather than a hope: while a drain is awaiting an async op,
+// fresh messages wait behind it. A failed boot replies err (18) to
+// every queued caller and fails later callers fast.
 
 import { bootEngine, createRpcHost } from './opfs-rpc.js';
 import { corvidOpfs } from './opfs-shim.js';
@@ -26,9 +29,10 @@ import { corvidOpfs } from './opfs-shim.js';
 const pendingControls = new Map(); // stream id -> () => resolve
 
 let openDbs = 0;
-let booted = false; // flips once host + env exist, before the drain
 let host = null;
-const bootQueue = []; // req messages that arrived before boot finished
+let bootFailed = null;
+let draining = false;
+const queue = []; // every req, in arrival order
 
 self.onmessage = async (ev) => {
   const m = ev.data;
@@ -42,14 +46,37 @@ self.onmessage = async (ev) => {
     return;
   }
   if (m.t !== 'req') return;
-  if (!booted) {
-    bootQueue.push(m);
-    return;
-  }
-  await handle(m);
+  queue.push(m);
+  if (!draining) drain();
 };
 
+async function drain() {
+  draining = true;
+  try {
+    while (queue.length > 0) {
+      const m = queue.shift();
+      await handle(m);
+    }
+  } finally {
+    draining = false;
+  }
+}
+
 async function handle(m) {
+  await bootPromise; // one-shot: the first req (queued or not) rides
+  // out the boot; the queue holds everything behind it (FIFO held).
+  if (!host) {
+    // Boot failed: deterministic err (18) for every caller, queued or
+    // later — recovery does not depend on the browser surfacing the
+    // worker's unhandled rejection through onerror.
+    self.postMessage({
+      t: 'err',
+      id: m.id,
+      c: 18,
+      m: `worker boot failed: ${bootFailed ?? 'unknown error'}`,
+    });
+    return;
+  }
   try {
     const v = await host.dispatch(m, (id, rows) =>
       new Promise((resolveEmit) => {
@@ -82,10 +109,17 @@ async function handle(m) {
   }
 }
 
-(async () => {
-  const glue = await bootEngine();
+const bootPromise = (async () => {
+  try {
+    const glue = await bootEngine();
+    host = createRpcHost(glue, await makeEnv());
+  } catch (e) {
+    bootFailed = String(e?.message ?? e);
+  }
+})();
 
-  const env = {
+async function makeEnv() {
+  return {
     async openHandle(name) {
       const root = await navigator.storage.getDirectory();
       const dir = await root.getDirectoryHandle('corvid', { create: true });
@@ -138,11 +172,4 @@ async function handle(m) {
       }
     },
   };
-
-  host = createRpcHost(glue, env);
-  booted = true;
-  // Drain in arrival order — the FIFO contract the whole protocol leans on.
-  for (const m of bootQueue.splice(0)) {
-    await handle(m);
-  }
-})();
+}

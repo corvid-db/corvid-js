@@ -570,8 +570,8 @@ defect, and both legs' totals are pinned):
 | `REOPEN` | `await db.close()` then `await openOpfs(sameName)` (§5.3 releases the lock first — ordering is the test's own proof) |
 | `DUMP` | `bytes = await db.dump()` — the harness holds the buffer |
 | `LOAD` | `await db.load(bytes)` |
-| `LOAD_RENAMES docs,renamed` | `await db.loadWithRenames(bytes, {docs: 'renamed'})`; the invalid-target case expects 11, the bad-rename case expects 11 |
-| `BACKUP` / `BACKUP_DUP` | `await db.backupTo('b.corvid')`; second call expects 17 |
+| `LOAD_RENAMES docs,renamed` | `await db.loadWithRenames(bytes, {docs: 'renamed'})`; the fixture's invalid-TARGET case (`docs,__bad`) expects 11 |
+| `BACKUP` / `BACKUP_DUP` | `await db.backupTo('<scenario>-backup')` (a plain sibling name under `corvid/`); second call expects 17 |
 | `FILEDB2` | a second `openOpfs` on a fresh name |
 
 Baseline arithmetic: the 230-line six-file suite is unchanged (sync

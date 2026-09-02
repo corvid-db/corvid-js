@@ -8,6 +8,10 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
+// ROOT ends in '/'; normalize it away so the guard compares against
+// `<root>/` exactly (no sibling-directory prefix matches, no double
+// slash rejecting everything).
+const ROOT_PREFIX = normalize(ROOT).replace(/\/+$/, '');
 const MIME = {
   '.js': 'text/javascript',
   '.mjs': 'text/javascript',
@@ -28,7 +32,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     let path = join(ROOT, decodeURIComponent(url.pathname));
-    if (!normalize(path).startsWith(normalize(ROOT))) {
+    if (!normalize(path).startsWith(ROOT_PREFIX + '/')) {
       res.writeHead(403).end('forbidden');
       return;
     }

@@ -251,7 +251,10 @@ export async function runAsyncFixture(file, dbName) {
   let executed = 0;
   for (const raw of text.split('\n')) {
     const line = raw.replace(/\r$/, '');
-    if (line.length === 0 || line[0] === '#') continue;
+    const t = line.trimStart();
+    // Same skip rule as the pre-scan (indented comments and blank
+    // lines are not executable) — the counts can never diverge on them.
+    if (t.length === 0 || t.startsWith('#')) continue;
     const ctx = `${file}:${executed + 1}`;
     let op = line;
     let argsStr = '';

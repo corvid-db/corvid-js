@@ -8,26 +8,24 @@
  * dispatched, every expectation checked. The fixtures are test-time
  * inputs — the binding itself parses nothing.
  *
- * Which files are vendored, and why six of eight: values, mutations,
- * queries, schema, graph, geo run on in-memory databases and are
- * vendored whole (230 executable lines, including the v0.3.0
- * VMAP_KEYS and PHRASE additions). persist.txt and admin.txt are NOT
- * vendored: every scenario in them is anchored on FILEDB/REOPEN/
- * DUMP/LOAD — the wasm persistence boundary (docs/PLAN.md §5: wasm
- * has no filesystem; OPFS persistence is a decided, trigger-based
- * deferral). The in-memory-executable contracts those files also
- * pinned (the compact quiescence gate, collections listing, session
- * durability) are held by test/regressions.spec.ts instead. A fixture
- * line this harness cannot run is NOT silently skipped — unknown OPs
- * throw, and the pre-scan/count divergence check below turns any
- * dispatch-loop skip into a failure.
+ * Which files run here, and why six of eight: values, mutations,
+ * queries, schema, graph, geo run on in-memory databases against the
+ * SYNC surface (230 executable lines, including the v0.3.0 VMAP_KEYS
+ * and PHRASE additions). persist.txt and admin.txt are also vendored
+ * now — they run against the ASYNC OPFS surface in the browser legs
+ * (test/browser-e2e via Playwright, per docs/OPFS-SPEC.md §8; their
+ * in-memory-executable contracts — the compact quiescence gate,
+ * collections listing, session durability — are ALSO held by
+ * test/regressions.spec.ts). A fixture line this harness cannot run
+ * is NOT silently skipped — unknown OPs throw, and the pre-scan/count
+ * divergence check below turns any dispatch-loop skip into a failure.
  *
- * Where the suite runs: node's wasm runtime, via the package's node
- * entry (`corvid-js/node`) — the same wasm binary browsers load. The
+ * Where the suite runs: BOTH runtimes, entry-agnostically — node's
+ * wasm runtime via the node entry, and real Chromium via `await
+ * init()` (vitest browser mode; docs/PLAN.md §7's promise). The
  * engine's semantics under node's WebAssembly and a browser's are
- * identical (both instantiate the same module); browser-test
- * infrastructure, when it exists, will run this same spec against
- * `await init()` — documented as the CI choice in docs/PLAN.md §7.
+ * identical (both instantiate the same module); the browser leg
+ * additionally proves the loader path users actually ship.
  *
  * Port conventions (mirroring c/smoke.c in the engine repo):
  *   - '#' lines and blank lines are ignored (not counted executable);
