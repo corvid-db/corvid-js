@@ -661,3 +661,13 @@ if (typeof Symbol.dispose === 'symbol') {
 export function ffiVersion() {
   return call(wasm.ffi_version, null, []);
 }
+
+// -- OPFS persistence (docs/OPFS-SPEC.md) --------------------------------------
+//
+// The async surface: persistent databases over OPFS, hosted in a
+// dedicated Worker, Promises on every op. The sync classes above are
+// untouched (in-memory per session — their contract stays pinned by
+// regressions.spec.ts). `openOpfs` is browser-only; under Node use the
+// sync surface via 'corvid-js/node'.
+
+export { openOpfs, AsyncDb, AsyncCollection, AsyncQuery } from './opfs-async.js';

@@ -12,8 +12,10 @@
  *   canonicalize across the JS↔wasm Number boundary (`-0.0`, `inf`,
  *   `-inf` survive bit-exactly; vector elements keep their f32 bits).
  *
- * Persistence: every `Db` is in-memory per session (wasm has no
- * filesystem; OPFS persistence is a decided future addition).
+ * Persistence: the sync surface (Db/Collection/Query) is in-memory per
+ * session; OPFS persistence is the async surface (`openOpfs` /
+ * AsyncDb / AsyncCollection / AsyncQuery, docs/OPFS-SPEC.md) — one OPFS
+ * file per database hosted in a dedicated Worker.
  */
 
 /** Initialize the wasm module synchronously (Node/deno hosts with the bytes on disk). */
@@ -415,3 +417,232 @@ export function not(pred: Predicate): Predicate;
 
 /** The FFI-ABI generation this binding covers (docs/FFI.md §1.3). */
 export function ffiVersion(): number;
+
+// -- OPFS persistence (docs/OPFS-SPEC.md §4) -----------------------------------
+//
+// The async mirror of the sync surface: persistent databases over OPFS
+// (one file per database, `<OPFS root>/corvid/<name>.corvid`), hosted
+// in a dedicated Worker. Every method returns a Promise; the sync
+// classes above stay synchronous and in-memory. `field`/`and`/`or`/
+// `not`, `CorvidFloat`, `ErrorCode`, and the value mapping are shared
+// with the sync surface. Browser-only: under Node import the sync
+// surface from 'corvid-js/node'.
+
+/** Options for {@link openOpfs}. */
+export interface OpenOpfsOptions {
+  /**
+   * Request persistent storage for the origin at open (best-effort,
+   * default `true`; see {@link AsyncDb.isPersistentStorage}). Never
+   * fatal when the browser refuses.
+   */
+  persistent?: boolean;
+}
+
+/**
+ * Open (creating if absent) a persistent OPFS database. A second open
+ * of the same name while the first is live rejects with `Busy` (19) —
+ * the cross-tab single-writer contract. The database lives until
+ * `close()` resolves; after that, the lock is free and the file can be
+ * reopened.
+ */
+export function openOpfs(name: string, opts?: OpenOpfsOptions): Promise<AsyncDb>;
+
+/**
+ * A persistent OPFS database handle — the Promise-flavored twin of
+ * {@link Db}. After `close()` resolves, later calls reject with code 1.
+ */
+export declare class AsyncDb {
+  /** {@link openOpfs} as a static — parity with `Db.openMemory()`. */
+  static openOpfs(name: string, opts?: OpenOpfsOptions): Promise<AsyncDb>;
+
+  private constructor();
+
+  /** Acquire a collection handle (lazily created by the engine on first write). */
+  collection(name: string): Promise<AsyncCollection>;
+
+  /** The names of the database's collections. */
+  collections(): Promise<string[]>;
+
+  /**
+   * Compact the database's storage. Requires quiescence (every
+   * AsyncCollection/AsyncQuery derived from this db closed or
+   * executed), otherwise rejects with `Busy` (19).
+   */
+  compact(): Promise<boolean>;
+
+  /** The v2 dump stream as bytes — the portable whole-database form. */
+  dump(): Promise<Uint8Array>;
+
+  /** Replay a dump stream into this database (merge semantics). */
+  load(bytes: BufferSource): Promise<void>;
+
+  /** Replay a dump stream, renaming collections per `renames`. */
+  loadWithRenames(bytes: BufferSource, renames: Record<string, string>): Promise<void>;
+
+  /**
+   * Physical backup into `name` (a sibling under the `corvid/` OPFS
+   * directory). An existing target rejects with code 17; a failed
+   * backup leaves no debris. Feature-configuration-sensitive like the
+   * native backup — `dump`/`load` is the portable path.
+   */
+  backupTo(name: string): Promise<void>;
+
+  /**
+   * Origin-wide storage estimate (`{usage, quota}`) — deliberately
+   * imprecise by platform design; includes OPFS usage.
+   */
+  storageEstimate(): Promise<{ usage: number; quota: number }>;
+
+  /** Best-effort persistent-storage request; whether it was granted. */
+  requestPersistentStorage(): Promise<boolean>;
+
+  /** Whether the origin's storage is currently persistent. */
+  isPersistentStorage(): Promise<boolean>;
+
+  /**
+   * Close the database and release the OPFS lock. Resolves only after
+   * the worker has torn everything down (SPEC §5.3) — the moment this
+   * resolves, the file can be reopened. Idempotent.
+   */
+  close(): Promise<void>;
+
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+/** A collection handle — the Promise-flavored mirror of {@link Collection}. */
+export declare class AsyncCollection {
+  private constructor();
+
+  /** The collection's name (facade-local — no round-trip). */
+  get name(): string;
+
+  // mutations
+
+  insert(key: Key, doc: unknown): Promise<void>;
+  insertMany(entries: [Key, unknown][]): Promise<void>;
+  insertAuto(doc: unknown): Promise<Key>;
+
+  /**
+   * Read-modify-write: the callback receives the current document (or
+   * `null` when absent) and returns the new document — `null`/
+   * `undefined` to delete. Exact (not a race) under OPFS single-writer.
+   * A throwing callback rejects with `InvalidArgument` and writes nothing.
+   */
+  update(key: Key, fn: (current: unknown) => unknown): Promise<boolean>;
+
+  patch(key: Key, patch: unknown): Promise<void>;
+  compareAndSet(key: Key, expected: unknown, replacement: unknown): Promise<boolean>;
+  delete(key: Key): Promise<boolean>;
+  deleteWhere(pred: Predicate): Promise<number>;
+  deleteBatch(keys: Key[]): Promise<number>;
+
+  // TTL
+
+  insertWithTtl(key: Key, doc: unknown, expiresAt: number): Promise<void>;
+  setTtl(key: Key, expiresAt: number | null): Promise<void>;
+  getTtl(key: Key): Promise<number | null>;
+  purgeExpired(now: number): Promise<number>;
+
+  // reads
+
+  get(key: Key): Promise<unknown>;
+  scan(): Promise<{ key: Key; doc: unknown }[]>;
+
+  /**
+   * Stream with a callback `(key, doc) => boolean` — returning `false`
+   * stops the walk early (not an error). Resolves to the rows visited;
+   * memory stays bounded by the transport chunk, not the collection.
+   */
+  scanEach(cb: (key: Key, doc: unknown) => boolean | void): Promise<number>;
+
+  page(after: Key | null, limit: number): Promise<Page>;
+  len(): Promise<number>;
+  isEmpty(): Promise<boolean>;
+
+  // direct search
+
+  phraseSearch(field: string, phrase: string, k: number): Promise<Row[]>;
+
+  // indexes (all eleven variants, same semantics as the sync surface)
+
+  createScalarIndex(field: string): Promise<void>;
+  createCompoundIndex(fields: string[]): Promise<void>;
+  createTextIndex(field: string): Promise<void>;
+  createTextIndexOndisk(field: string): Promise<void>;
+  createGeoIndex(field: string): Promise<void>;
+  createVectorIndex(field: string, metric: Metric): Promise<void>;
+  createVectorIndexQuantized(field: string, metric: Metric, quant: Quantization): Promise<void>;
+  createVectorIndexOndisk(field: string, metric: Metric): Promise<void>;
+  createVectorIndexOndiskQuantized(field: string, metric: Metric, quant: Quantization): Promise<void>;
+  createVectorIndexPq(field: string, metric: Metric, m: number, k: number): Promise<void>;
+  createVectorIndexOndiskPq(field: string, metric: Metric, m: number, k: number): Promise<void>;
+
+  // schema
+
+  setSchema(fields: SchemaField[]): Promise<void>;
+  schema(): Promise<SchemaField[] | null>;
+
+  // graph
+
+  link(from: Key, relation: string, to: Key): Promise<void>;
+  linkWeighted(from: Key, relation: string, to: Key, weight: number): Promise<void>;
+  unlink(from: Key, relation: string, to: Key): Promise<boolean>;
+  neighbors(from: Key, relation: string): Promise<Key[]>;
+  inNeighbors(to: Key, relation: string): Promise<Key[]>;
+  neighborsWeighted(from: Key, relation: string): Promise<{ key: Key; weight: number }[]>;
+  traverse(start: Key, relation: string, hops: number): Promise<Key[]>;
+
+  // geo
+
+  geoWithinRadius(field: string, lat: number, lon: number, radiusKm: number): Promise<GeoHit[]>;
+  geoWithinBBox(field: string, minLat: number, minLon: number, maxLat: number, maxLon: number): Promise<GeoHit[]>;
+  geoNearest(field: string, lat: number, lon: number, k: number): Promise<GeoHit[]>;
+
+  // queries
+
+  /** Begin a fluent query (chain synchronously; terminals are Promises). */
+  query(): AsyncQuery;
+
+  /** Release the handle (idempotent; also runs on GC). */
+  close(): Promise<void>;
+
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+/**
+ * A fluent query builder — the async twin of {@link Query}. Chain
+ * methods are synchronous and return `this`; a chain method whose
+ * argument the sync layer would reject instead poisons the chain (the
+ * first error rejects every later result-carrying terminal).
+ * `close()` is exempt from poisoning.
+ */
+export declare class AsyncQuery {
+  private constructor();
+
+  filter(pred: Predicate): this;
+  vector(field: string, query: Float32Array, k: number, metric?: Metric): this;
+  text(field: string, query: string, k: number): this;
+  fuseRrf(k: number): this;
+  rerankMmr(lambda: number): this;
+  approx(): this;
+  limit(n: number): this;
+  offset(n: number): this;
+  orderBy(field: string, descending?: boolean): this;
+  select(fields: string[]): this;
+
+  run(): Promise<Row[]>;
+  count(): Promise<number>;
+  countDistinct(field: string): Promise<number>;
+  sum(field: string): Promise<number>;
+  avg(field: string): Promise<number | null>;
+  min(field: string): Promise<unknown>;
+  max(field: string): Promise<unknown>;
+  groupCount(field: string): Promise<Record<string, number>>;
+  groupSum(groupField: string, valueField: string): Promise<Record<string, number>>;
+  groupAvg(groupField: string, valueField: string): Promise<Record<string, number>>;
+
+  /** Abandon the builder without executing (poison-exempt). */
+  close(): Promise<void>;
+
+  [Symbol.asyncDispose](): Promise<void>;
+}

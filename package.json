@@ -1,7 +1,7 @@
 {
   "name": "corvid-js",
   "version": "0.3.4",
-  "description": "Browser/Worker binding for the corvid embedded database — the engine compiled to wasm32, exposed as idiomatic synchronous OOP (in-memory per session; OPFS persistence is a decided future addition)",
+  "description": "Browser/Worker binding for the corvid embedded database — the engine compiled to wasm32: idiomatic synchronous OOP (in-memory) plus async OPFS persistence via a dedicated Worker",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -35,6 +35,11 @@
     "index.js",
     "index.d.ts",
     "node.mjs",
+    "opfs-async.js",
+    "opfs-link.js",
+    "opfs-rpc.js",
+    "opfs-shim.js",
+    "opfs-worker.js",
     "pkg/corvid_js.js",
     "pkg/corvid_js.d.ts",
     "pkg/corvid_js_bg.wasm",
