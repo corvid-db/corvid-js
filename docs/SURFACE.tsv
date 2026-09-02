@@ -122,8 +122,10 @@ corvid::QueryBuilder::run	SELECT shaping	MAPPED	Query.run	golden:queries.txt:QVE
 corvid::Db	Lifecycle	MAPPED	Db (new Db() / Db.openMemory)	regressions:session durability; golden:queries.txt (COLL/INSERT)
 corvid::Db::open	Lifecycle	N/A	N/A	wasm has no filesystem — persistence deferred (the OPFS trigger, docs/PLAN.md §5); the in-memory Db is the shipped boundary; Db::open's file-backed store is unconstructible on wasm32 — only open_in_memory is
 corvid::Db::open_in_memory	Lifecycle	MAPPED	new Db() / Db.openMemory()	regressions:session durability; golden:mutations.txt:COLL
+corvid::Db::open_with_backend	Lifecycle	N/A	N/A	wasm-only backend seam: mapped by the OPFS async surface (openOpfs, docs/OPFS-SPEC.md §3.3), landing with the OPFS program
 corvid::Db::collection	Lifecycle	MAPPED	Db.collection	golden:mutations.txt:COLL
 corvid::Db::backup	Lifecycle	N/A	N/A	wasm has no filesystem — persistence deferred (the OPFS trigger, docs/PLAN.md §5); the in-memory Db is the shipped boundary; backup copies the db to a fresh FILE, which wasm cannot create
+corvid::Db::backup_with_backend	Lifecycle	N/A	N/A	wasm-only backend seam: mapped by the OPFS async surface (openOpfs, docs/OPFS-SPEC.md §3.3), landing with the OPFS program
 corvid::Db::bulk	Lifecycle	N/A	N/A	put_many covers the bulk fast path (FFI.md §9); Db::bulk not exposed
 corvid::Db::compact	Lifecycle	MAPPED	Db.compact	regressions:compact quiescence gate (busy 19 with handles open, quiescent pass, data intact)
 corvid::Db::collections	Lifecycle	MAPPED	Db.collections	regressions:collections listing (admin.txt's in-memory-executable CONTRACT; the file-db scenario is not vendored)
@@ -148,12 +150,14 @@ corvid::db::Page	SELECT shaping	MAPPED	Collection.page / Page	golden:mutations.t
 corvid::Store	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::open	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::open_in_memory	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
+corvid::Store::open_with_backend	Lifecycle	N/A	N/A	wasm-only backend seam: mapped by the OPFS async surface (openOpfs, docs/OPFS-SPEC.md §3.3), landing with the OPFS program
 corvid::Store::set_relaxed_durability	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::begin_bulk	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::flush	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::compact	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::next_auto_id	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::backup	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
+corvid::Store::backup_with_backend	Lifecycle	N/A	N/A	wasm-only backend seam: mapped by the OPFS async surface (openOpfs, docs/OPFS-SPEC.md §3.3), landing with the OPFS program
 corvid::Store::transaction	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::read	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
 corvid::Store::put	Lifecycle	N/A	N/A	engine low-level byte KV (Store/WriteBatch/ReadBatch); the v1 binding is typed-document only (FFI.md ruling 1)
