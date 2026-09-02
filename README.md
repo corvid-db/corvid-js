@@ -18,7 +18,10 @@ queries — works and is pinned by the engine's golden fixtures.
 - Engine pin: [`corvid-db` git dep, tag `v0.3.2`](Cargo.toml) (exact
   release tags, per the bindings program; the engine PACKAGE is
   corvid-db — lib ident `corvid` — as of v0.3.2).
-- Install status: **pending first npm publish** — build from source
+- Install status: **pending first npm publish** — 0.3.2 is fully staged
+  (wasm built against the v0.3.2 pin, suite + size/surface gates green,
+  `npm pack` verified) but the publishing npm account enforces 2FA, so
+  the publish needs a one-time password; build from source
   meanwhile (below).
 
 ## Use (browsers / bundlers)
