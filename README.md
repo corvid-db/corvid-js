@@ -15,7 +15,7 @@ addition (see [docs/PLAN.md §5](docs/PLAN.md)). Everything else the
 engine does — every index family, schemas, TTL, graph, geo, hybrid
 queries — works and is pinned by the engine's golden fixtures.
 
-- Engine pin: [`corvid` git dep, tag `v0.3.0`](Cargo.toml) (exact
+- Engine pin: [`corvid` git dep, tag `v0.3.1`](Cargo.toml) (exact
   release tags, per the bindings program).
 - Install status: **pending first npm publish** — build from source
   meanwhile (below).
@@ -47,7 +47,7 @@ const rows = docs
   .limit(2)
   .run(); // [{ key, doc, score }]
 
-// Phrase search (v0.3.0): consecutive in-order tokens, BM25 scores.
+// Phrase search (v0.3.1): consecutive in-order tokens, BM25 scores.
 docs.phraseSearch('body', 'embedded database', 10);
 ```
 
@@ -78,7 +78,7 @@ Reading back: Int → `number` (or `bigint` beyond ±2^53); Float →
 canonicalize across the JS↔wasm Number boundary (`-0.0`, `±inf` are
 exact; vector elements keep their f32 bits). Keys are strings (UTF-8)
 or Uint8Arrays. `Object.keys()` of a mapped document enumerates the
-engine's ascending key-byte order (the v0.3.0 `map_keys` surface).
+engine's ascending key-byte order (the v0.3.1 `map_keys` surface).
 
 Errors are `CorvidError` (`e.code` = the C ABI's frozen 0–19 table,
 `e.message` = the engine text). Everything is synchronous — no

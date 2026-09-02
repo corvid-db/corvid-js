@@ -12,7 +12,7 @@ runtime: the engine compiled to `wasm32-unknown-unknown` behind
 OOP layer. It follows the locked program rules: **golden-suite port
 before ergonomic sugar**, OOP idiom gate (handles → JS classes, FFI
 symbols never in the public API), exact engine-tag
-pinning (`v0.3.0`), sync-first (the engine is sync; wasm-bindgen sync
+pinning (`v0.3.1`), sync-first (the engine is sync; wasm-bindgen sync
 calls, no async anywhere on the data path).
 
 ## 1. What shipped in this bootstrap
@@ -23,7 +23,7 @@ calls, no async anywhere on the data path).
 | The OOP idiom layer | `index.js` — `Db`, `Collection`, `Query` (fluent), `field()`/`and`/`or`/`not`, `CorvidError`, `CorvidFloat`, `init`/`initSync` |
 | The Node entry (dev/test/tooling) | `node.mjs` — `initSync` from disk at import, re-exports the surface |
 | Public types | `index.d.ts` (handwritten; the wasm-bindgen-generated `pkg/corvid_js.d.ts` is internal) |
-| The golden-suite port | `test/golden.spec.ts` driving `test/golden/*.txt` — six files vendored verbatim from the v0.3.0 release (the same fixtures the C smoke suite runs) |
+| The golden-suite port | `test/golden.spec.ts` driving `test/golden/*.txt` — six files vendored verbatim from the v0.3.1 release (the same fixtures the C smoke suite runs) |
 | Binding-local contracts | `test/regressions.spec.ts` — the compact quiescence gate, collections listing, session durability, the accepted-review regressions (B1/M7), the frozen error table |
 | Size-budget gate | `scripts/size-gate.sh` — gzipped wasm ≤ 1 MiB (CI-enforced; see §6) |
 | Surface manifest | `docs/SURFACE.tsv` (327 engine constructs resolved) + `scripts/surface-gate.sh` |
@@ -42,7 +42,7 @@ silently passing).
 Architectures on the table:
 
 1. **(chosen)** A Rust crate that compiles the engine to
-   `wasm32-unknown-unknown` (`corvid = { git = "...", tag = "v0.3.0" }`)
+   `wasm32-unknown-unknown` (`corvid = { git = "...", tag = "v0.3.1" }`)
    and exposes **typed wasm-bindgen exports** — real `#[wasm_bindgen]`
    classes (`WasmDb`, `WasmCollection`, `WasmQuery`) with `JsValue`
    crossing points — which a thin JS layer (`index.js`) wraps into the
@@ -77,7 +77,7 @@ Handles become JS classes; FFI/engine symbols never leak:
 | ABI handle | JS class | Notes |
 | --- | --- | --- |
 | `corvid_db*` | `Db` | `new Db()` (in-memory — the shipped boundary, §5), `openMemory()` parity alias, `close()` idempotent, `Symbol.dispose` when available |
-| `corvid_coll*` | `Collection` | mutations, reads, TTL, indexes (all variants), schema, graph, geo, `query()`, `phraseSearch()` (v0.3.0) |
+| `corvid_coll*` | `Collection` | mutations, reads, TTL, indexes (all variants), schema, graph, geo, `query()`, `phraseSearch()` (v0.3.1) |
 | `corvid_query*` | `Query` | fluent chaining (`filter().vector().text().fuseRrf().rerankMmr().limit().run()`); terminal ops (`run` + every aggregation) consume it; `close()` is the abandoned-builder path |
 | `corvid_rows*`/`_strs*`/`_geohits*`/`_groupiter*`/`_schemaiter*` | native arrays/objects | cursors materialize as `Row[]`, `string[]`, `GeoHit[]`, `Record<string, number>`, `SchemaField[]` — JS-native iteration |
 | `corvid_value*` | the value mapping | see §4 |
@@ -138,7 +138,7 @@ Documented corners:
   `2` and `2.0` the same; the remaining observable distinction —
   compare-and-set/unique equality against typed floats, and group-key
   tags (`i:2` vs `f:0.5`) — is why `CorvidFloat` exists.
-- **Map keys / the v0.3.0 `corvid_value_map_keys` ABI**: engine Maps
+- **Map keys / the v0.3.1 `corvid_value_map_keys` ABI**: engine Maps
   surface as plain objects whose property insertion order IS the
   engine's ascending-key-byte order, so `Object.keys()` of a mapped
   document is the map_keys enumeration (non-maps enumerate empty,
@@ -268,9 +268,9 @@ suite running the same fixtures.
 | JS idiom layer in `index.js` wrapping the wasm classes | fluent chaining + real `CorvidError` subclass; keeps the wasm surface minimal; FFI/engine types never leak |
 | `--target web` glue + `node.mjs` initSync entry (single artifact) | one wasm binary for browsers, Workers, and the Node test runtime; browsers stay async-init-only at the module level, Node zero-config |
 | Predicates as plain descriptor objects | one crossing per engine op, full TS typing, no native predicate handle to manage |
-| Vendored golden fixtures (from the v0.3.0 release, 6 of 8 files; persist/admin excluded as file-db scenarios) | §5: the suite must run offline and per-PR; the two excluded files ARE the deferred persistence boundary; their in-memory contracts live in regressions.spec.ts |
-| VMAP_KEYS/GET_KEYS proven via `Object.keys()` | the mapped object's insertion order is the engine's ascending key-byte order — the JS-native form of the v0.3.0 additive ABI |
-| phrase_search mapped to `Collection.phraseSearch` | the v0.3.0 additive ABI exists to give bindings the direct fn; the query builder keeps the fused form |
+| Vendored golden fixtures (from the v0.3.1 release, 6 of 8 files; persist/admin excluded as file-db scenarios) | §5: the suite must run offline and per-PR; the two excluded files ARE the deferred persistence boundary; their in-memory contracts live in regressions.spec.ts |
+| VMAP_KEYS/GET_KEYS proven via `Object.keys()` | the mapped object's insertion order is the engine's ascending key-byte order — the JS-native form of the v0.3.1 additive ABI |
+| phrase_search mapped to `Collection.phraseSearch` | the v0.3.1 additive ABI exists to give bindings the direct fn; the query builder keeps the fused form |
 | NaN-class comparison in the golden port | the JS↔wasm Number boundary canonicalizes NaN payloads; deviation documented (§4) |
 | `CorvidFloat` marker class | typed-float escape hatch for the Int/Float collapse (CAS/unique/group-keys) |
 | Counter + Arc exclusivity for `compact` | mirrors the ABI §4.13 gate exactly; pinned by the regressions spec |
