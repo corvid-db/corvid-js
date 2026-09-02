@@ -25,7 +25,7 @@ js-sys = "0.3"
 # corvid, so `use corvid::…` is unchanged). The engine's own
 # corvid-wasm size harness proves this dep graph links clean on
 # wasm32-unknown-unknown within the 2 MB gzipped budget.
-corvid-db = { git = "https://github.com/corvid-db/corvid.git", tag = "v0.3.4" }
+corvid-db = { git = "https://github.com/corvid-db/corvid.git", tag = "v0.4.0" }
 
 # redb's StorageBackend trait, which the OPFS backend implements
 # (docs/OPFS-SPEC.md §3): the same semver region the engine's git dep

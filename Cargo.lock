@@ -17,7 +17,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "corvid-db"
 version = "0.3.4"
-source = "git+https://github.com/corvid-db/corvid.git?tag=v0.3.4#3b46c3b1e55b163ba059af759fbbf5219aceae37"
+source = "git+https://github.com/corvid-db/corvid.git?tag=v0.4.0#3b46c3b1e55b163ba059af759fbbf5219aceae37"
 dependencies = [
  "redb",
  "thiserror",
