@@ -51,12 +51,17 @@
   "scripts": {
     "build": "wasm-pack build --release --target web --out-dir pkg --out-name corvid_js",
     "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:e2e": "playwright test",
     "lint": "cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings",
     "size-gate": "./scripts/size-gate.sh",
     "surface-gate": "./scripts/surface-gate.sh",
     "examples": "node examples/quickstart.js && node examples/hybrid.js && node examples/vector-index.js && node examples/text-search.js && node examples/graph.js && node examples/geo.js"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@vitest/browser": "^4.1.11",
+    "@vitest/browser-playwright": "^4.1.11",
     "vitest": "^4.1.11"
   }
 }

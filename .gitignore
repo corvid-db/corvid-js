@@ -11,3 +11,8 @@ node_modules/
 
 # test scratch
 test/work/
+
+# browser-test debris (failure screenshots, run state, attachments)
+test/__screenshots__/
+test-results/
+.vitest-attachments/

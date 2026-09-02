@@ -554,12 +554,15 @@ queue, or coordination protocol to get wrong — the plan's ruling 4.
 
 ## 8. Conformance mapping (T5 — how the last two fixture files finally run)
 
-The browser test leg (Playwright/Chromium headless in CI; Firefox and
-Safari as runners allow, else a documented manual matrix) runs **all
-eight** fixture files in-browser: the six existing files through the
-**sync surface** (`await init()` on the page — the PLAN.md §7
-browser-leg follow-up finally cashed in), and the two previously
-excluded files through the async surface:
+The browser conformance runs in **real Chromium, as two legs**: the
+SAME golden spec in-page via `await init()` (vitest browser mode —
+PLAN.md §7's "runs unchanged" promise, cashed for the six sync files'
+230 lines), and a Playwright E2E leg over plain http where the async
+surface runs the two previously excluded files with the
+production-faithful Worker construct (no dev-server transform — vite's
+dev-time worker rewrite stalls raw module workers, so the async leg
+runs unbundled; the quirk is a test-environment fact, not a shipped
+defect, and both legs' totals are pinned):
 
 | Fixture op | Browser mapping |
 | --- | --- |
@@ -578,10 +581,14 @@ surface, Node leg keeps running it); the browser leg runs
 ASYNC — the gate update lands with T5, not before, so the manifest
 never claims an unshipped surface).
 
-Extra browser-only tests the leg adds: persistence across page reload
+Extra browser-only tests the E2E leg adds: persistence across page reload
 (navigate away and back, data intact); cross-tab BUSY (second page's
-`openOpfs` rejects 19); quota-path unit (mocked QuotaExceeded → 4);
-legacy-handle detection (§5.6, mocked thenable `getSize`).
+`openOpfs` rejects 19, and the lock frees the moment the first page
+closes); dump bytes transferred intact across the worker boundary.
+Quota-path unit tests run in Node against the fake handle (mocked —
+real quota can't be forced); the legacy-handle detection (§5.6, mocked
+thenable `getSize`) likewise. Firefox/Safari remain a documented
+manual matrix until CI runners allow (Chromium is the enforced leg).
 
 ---
 

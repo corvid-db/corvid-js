@@ -8,13 +8,26 @@
 // SPEC §7's "one dispatcher, two hosts" by design).
 
 import { beforeEach, expect, test } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import { AsyncDb, openOpfs } from '../opfs-async.js';
 import { CorvidError, CorvidFloat, field } from '../index.js';
 import { DirectLink } from '../opfs-link.js';
-import { bootEngine, createRpcHost } from '../opfs-rpc.js';
+import { createRpcHost } from '../opfs-rpc.js';
 import { corvidOpfs } from '../opfs-shim.js';
 import { makeFakeHandle } from './helpers/fake-handle.js';
+
+/** The Node boot: initSync from disk + shim install (opfs-rpc's
+ * bootEngine is deliberately browser-pure — static imports only —
+ * because it loads inside raw module Workers). */
+async function bootEngineNode() {
+  const glue = await import('../pkg/corvid_js.js');
+  const out = glue.initSync({
+    module: readFileSync(new URL('../pkg/corvid_js_bg.wasm', import.meta.url)),
+  });
+  corvidOpfs.install(out.memory);
+  return glue;
+}
 
 let glue;
 let env;
@@ -79,7 +92,7 @@ async function codeOf(promise) {
 }
 
 beforeEach(async () => {
-  glue = await bootEngine();
+  glue = await bootEngineNode();
   env = makeEnv();
 });
 

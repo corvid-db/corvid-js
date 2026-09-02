@@ -27,27 +27,24 @@
 // both into {code, message} — hosts serialize that into the err
 // envelope.
 
-// Boot the engine (idempotent per host): Node instantiates
-// synchronously from disk, browsers fetch. Installs the wasm memory
-// into the shim — the OPFS backend's prerequisite (SPEC §3.2).
+// Static imports, deliberately: this module loads inside a raw
+// Dedicated Worker (`new Worker(url, {type:'module'})`), where vite's
+// dev-time dynamic-import shims do not exist — a dynamic import here
+// broke the worker under every bundler/dev-server that transforms it
+// (found by the browser leg). The glue module is importable everywhere
+// (Node's entry does the same); only its INIT differs per host.
+import * as glueModule from './pkg/corvid_js.js';
+import { corvidOpfs } from './opfs-shim.js';
+
+// Boot the engine for a BROWSER host (worker or page): fetch +
+// instantiate, then install the wasm memory into the shim — the OPFS
+// backend's prerequisite (SPEC §3.2). Node hosts (the test suite's
+// DirectLink) boot via initSync themselves and pass the same glue
+// module to createRpcHost.
 export async function bootEngine() {
-  const glue = await import('./pkg/corvid_js.js');
-  const { corvidOpfs } = await import('./opfs-shim.js');
-  const isNode =
-    typeof process !== 'undefined' && process.versions?.node && !globalThis.window;
-  let memory;
-  if (isNode) {
-    const { readFileSync } = await import('node:fs');
-    const out = glue.initSync({
-      module: readFileSync(new URL('./pkg/corvid_js_bg.wasm', import.meta.url)),
-    });
-    memory = out.memory;
-  } else {
-    const out = await glue.default(); // init(): fetch + instantiate
-    memory = out.memory;
-  }
-  corvidOpfs.install(memory);
-  return glue;
+  const out = await glueModule.default(); // init(): fetch + instantiate
+  corvidOpfs.install(out.memory);
+  return glueModule;
 }
 
 // Normalize any thrown value into the protocol's {code, message}.

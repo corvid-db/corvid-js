@@ -60,23 +60,52 @@
  */
 
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+// The fixture language (tokenizing, literals, comparison) lives in the
+// shared helper so the browser conformance harness parses with the
+// SAME grammar — one language, two hosts.
 import {
-  Db,
-  Collection,
-  CorvidError,
-  CorvidFloat,
-  field,
-  and,
-  or,
-  not,
-  ffiVersion,
-} from '../node.mjs';
+  bytesOf,
+  checkValue,
+  doubleMatches,
+  errCode,
+  isDigits,
+  isPlainObject,
+  listBody,
+  mapKeysOf,
+  numbersEqual,
+  parseDouble,
+  parseLiteral,
+  render,
+  splitTop,
+  textBody,
+  valuesEqual,
+  walkPath,
+} from './helpers/fixture-lang.js';
 
-const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), 'golden');
+// Entry-agnostic (docs/PLAN.md §7's promise cashed): Node runs against
+// the synchronous node entry; the browser leg (vitest --browser) runs
+// the SAME spec against the browser entry after `await init()`. The
+// wasm binary, the classes, and the calls are identical either way.
+import type { Db, Collection } from '../index.js';
+
+const isBrowser = typeof window !== 'undefined';
+const surface = isBrowser
+  ? await import('../index.js').then(async (m) => {
+      await m.init();
+      return m;
+    })
+  : await import('../node.mjs');
+const { Db: DbC, CorvidError, CorvidFloat, field, and, or, not, ffiVersion } = surface;
+
+// Fixture texts via vite's raw glob — works identically in Node and
+// browser vitest runs (no node:fs in the spec).
+const fixtureTexts = import.meta.glob('./golden/*.txt', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+
 const FILES = [
   'values.txt',
   'mutations.txt',
@@ -85,344 +114,6 @@ const FILES = [
   'graph.txt',
   'geo.txt',
 ];
-
-// ---------------------------------------------------------------------------
-// Tokenizing
-// ---------------------------------------------------------------------------
-
-/** Split `s` on top-level commas (depth-aware over []{}()). */
-function splitTop(s: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i <= s.length; i++) {
-    const c = i < s.length ? s[i] : ',';
-    if (c === '[' || c === '{' || c === '(') depth++;
-    else if (c === ']' || c === '}' || c === ')') depth--;
-    if (c === ',' && depth === 0) {
-      let end = i;
-      while (end > start && (s[end - 1] === ' ' || s[end - 1] === '\r')) end--;
-      if (end > start) out.push(s.slice(start, end));
-      start = i + 1;
-    }
-  }
-  return out;
-}
-
-const f64 = new DataView(new ArrayBuffer(8));
-
-/** f64 from raw bits (a BigInt). */
-function f64FromBits(bits: bigint): number {
-  f64.setBigUint64(0, bits & 0xffffffffffffffffn, false);
-  return f64.getFloat64(0, false);
-}
-
-function f64Bits(n: number): bigint {
-  f64.setFloat64(0, n, false);
-  return f64.getBigUint64(0, false);
-}
-
-const f32 = new DataView(new ArrayBuffer(4));
-
-/** f32 from raw bits (a uint32). */
-function f32FromBits(bits: number): number {
-  f32.setUint32(0, bits >>> 0, false);
-  return f32.getFloat32(0, false);
-}
-
-/** Parse one expected-double token: `~x` near; `=x`/`x`/bits:/inf exact. */
-function doubleMatches(got: number, tok: string): boolean {
-  if (tok.startsWith('~')) return doubleNear(got, parseDouble(tok.slice(1)));
-  return numbersEqual(got, parseDouble(tok.replace(/^=/, '')));
-}
-
-function doubleNear(got: number, want: number): boolean {
-  return Math.abs(got - want) <= 1e-6 * (1 + Math.abs(want));
-}
-
-/**
- * NaN fidelity boundary: V8/wasm canonicalize NaN payloads when a
- * double crosses the JS Number boundary (plain JS HeapNumbers preserve
- * them; the wasm crossing does not — the same corner corvid-node
- * documents for N-API). The engine itself preserves f64 bits, but a
- * JS consumer can only observe NaN-as-NaN, so payload-bit expectations
- * compare as NaN-class equality here. `-0.0`, `inf` and `-inf` DO
- * survive bit-exactly, and Float32Array vector elements keep their
- * bits (typed-array memory is copied, never boxed).
- */
-function numbersEqual(got: number, want: number): boolean {
-  if (Number.isNaN(got) && Number.isNaN(want)) return true;
-  return f64Bits(got) === f64Bits(want);
-}
-
-function parseDouble(tok: string): number {
-  if (tok === 'inf') return Infinity;
-  if (tok === '-inf') return -Infinity;
-  if (tok === 'nan') return NaN;
-  if (tok.startsWith('bits:')) return f64FromBits(BigInt(tok.slice(5)));
-  return parseFloat(tok);
-}
-
-/** The `err:N` expected token → its code. */
-function errCode(expected: string): number {
-  if (!expected.startsWith('err:')) throw new Error(`error expectation must be err:N, got '${expected}'`);
-  return parseInt(expected.slice(4), 10);
-}
-
-/** The `t(...)` literal body. */
-function textBody(tok: string): string {
-  if (!tok.startsWith('t(') || !tok.endsWith(')')) throw new Error(`expected a t(...) literal, got '${tok}'`);
-  return tok.slice(2, -1);
-}
-
-/** The `k(...)` list body. */
-function listBody(tok: string): string {
-  if (!tok.startsWith('k(') || !tok.endsWith(')')) throw new Error(`expected a k(...) list, got '${tok}'`);
-  return tok.slice(2, -1);
-}
-
-// ---------------------------------------------------------------------------
-// Value literals: parse into JS values (the mapping's input form)
-// ---------------------------------------------------------------------------
-
-const MAX_SAFE = 0x1fffffffffffff; // 2^53 - 1
-
-function isDigits(s: string): boolean {
-  return /^[0-9]+$/.test(s);
-}
-
-/** Parse an int token: a JS number when safe, a BigInt for the extremes. */
-function parseIntLiteral(tok: string): number | bigint {
-  const n = BigInt(tok);
-  if (n >= -MAX_SAFE && n <= MAX_SAFE) return Number(n);
-  return n;
-}
-
-/** Bytes literal body → Uint8Array at latin1 (the fixtures are byte-exact). */
-function bytesOf(body: string): Uint8Array {
-  const out = new Uint8Array(body.length);
-  for (let i = 0; i < body.length; i++) out[i] = body.charCodeAt(i) & 0xff;
-  return out;
-}
-
-/**
- * Parse one literal into the JS value the binding's mapping accepts:
- * ints → number|bigint, floats → number (bits preserved), t() → string,
- * b() → Uint8Array, vec() → Float32Array, [..] → Array, {k=v} → object.
- */
-function parseLiteral(src: string, pos = { i: 0 }): unknown {
-  skipWs(src, pos);
-  if (pos.i >= src.length) throw new Error('empty literal');
-  const start = pos.i;
-  const c = src[start];
-
-  // numbers: -123 | 3.5 | inf | -inf | nan | bits:0x…
-  const isWordNum = src.startsWith('inf', start) || src.startsWith('-inf', start) || src.startsWith('nan', start);
-  if (c === '-' || (c >= '0' && c <= '9') || src.startsWith('bits:', start) || isWordNum) {
-    let j = start;
-    let isFloat = false;
-    let isBits = false;
-    if (src.startsWith('inf', j) || src.startsWith('-inf', j) || src.startsWith('nan', j)) {
-      pos.i = j + (src.startsWith('-inf', j) ? 4 : 3);
-      return new CorvidFloat(parseDouble(src.slice(start, pos.i)));
-    }
-    if (src.startsWith('bits:', j)) {
-      isFloat = true;
-      isBits = true;
-      j += 5;
-    }
-    while (j < src.length) {
-      const d = src[j];
-      if ((d >= '0' && d <= '9') || d === '-' || d === '+') j++;
-      else if (d === '.' || d === 'e' || d === 'E') {
-        isFloat = true;
-        j++;
-      } else if (isBits && /[0-9a-fA-FxX]/.test(d)) j++;
-      else break;
-    }
-    const tok = src.slice(start, j);
-    pos.i = j;
-    if (isBits) return new CorvidFloat(f64FromBits(BigInt(tok.slice(5))));
-    if (isFloat) return new CorvidFloat(parseFloat(tok));
-    return parseIntLiteral(tok);
-  }
-
-  if (src.startsWith('null', start) && delimsAfter(src, start, 4)) {
-    pos.i = start + 4;
-    return null;
-  }
-  if (src.startsWith('true', start) && delimsAfter(src, start, 4)) {
-    pos.i = start + 4;
-    return true;
-  }
-  if (src.startsWith('false', start) && delimsAfter(src, start, 5)) {
-    pos.i = start + 5;
-    return false;
-  }
-
-  // t(...) / b(...) / vec(...)
-  const paren = (head: string, from: number): string | null => {
-    if (!src.startsWith(head, from)) return null;
-    const open = from + head.length - 1;
-    let depth = 0;
-    for (let q = open; q < src.length; q++) {
-      if (src[q] === '(') depth++;
-      else if (src[q] === ')') {
-        depth--;
-        if (depth === 0) return src.slice(open + 1, q);
-      }
-    }
-    throw new Error('unbalanced () in literal');
-  };
-  if ((c === 't' || c === 'b') && src[start + 1] === '(') {
-    const body = paren(c === 't' ? 't(' : 'b(', start)!;
-    pos.i = start + 2 + body.length + 1;
-    return c === 't' ? body : bytesOf(body);
-  }
-  if (c === 'v' && src.startsWith('vec(', start)) {
-    const body = paren('vec(', start)!;
-    pos.i = start + 4 + body.length + 1;
-    const elems = splitTop(body).map((tok) =>
-      tok.startsWith('bits32:') ? f32FromBits(parseInt(tok.slice(7), 16)) : parseDouble(tok),
-    );
-    return Float32Array.from(elems);
-  }
-
-  if (c === '[') {
-    const close = matchBracket(src, start, '[', ']');
-    const body = src.slice(start + 1, close);
-    const arr: unknown[] = [];
-    const p = { i: 0 };
-    while (p.i < body.length) {
-      arr.push(parseLiteral(body, p));
-      skipWs(body, p);
-      if (p.i < body.length && body[p.i] === ',') p.i++;
-    }
-    pos.i = close + 1;
-    return arr;
-  }
-
-  if (c === '{') {
-    const close = matchBracket(src, start, '{', '}');
-    const body = src.slice(start + 1, close);
-    const obj: Record<string, unknown> = {};
-    let j = 0;
-    while (j < body.length) {
-      let ke = j;
-      while (ke < body.length && body[ke] !== '=') ke++;
-      if (ke >= body.length) throw new Error('map literal needs k=v pairs');
-      const key = body.slice(j, ke).trim();
-      j = ke + 1;
-      const p = { i: j };
-      const value = parseLiteral(body, p);
-      obj[key] = value;
-      j = p.i;
-      while (j < body.length && (body[j] === ' ' || body[j] === ',')) j++;
-    }
-    pos.i = close + 1;
-    return obj;
-  }
-
-  throw new Error(`unparseable literal at '${src.slice(start, start + 24)}'`);
-}
-
-function delimsAfter(s: string, at: number, wordLen: number): boolean {
-  const after = s[at + wordLen];
-  return after === undefined || after === ',' || after === ']' || after === '}' || after === ' ' || after === '\r';
-}
-
-function matchBracket(s: string, at: number, open: string, close: string): number {
-  let depth = 0;
-  for (let q = at; q < s.length; q++) {
-    if (s[q] === open) depth++;
-    else if (s[q] === close) {
-      depth--;
-      if (depth === 0) return q;
-    }
-  }
-  throw new Error(`unbalanced ${open}${close} in literal`);
-}
-
-function skipWs(s: string, pos: { i: number }): void {
-  while (pos.i < s.length && (s[pos.i] === ' ' || s[pos.i] === '\r')) pos.i++;
-}
-
-// ---------------------------------------------------------------------------
-// Structural comparison (the mapped JS values)
-// ---------------------------------------------------------------------------
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return (
-    typeof v === 'object' && v !== null && !Array.isArray(v) &&
-    !(v instanceof Uint8Array) && !(v instanceof Float32Array)
-  );
-}
-
-function isNumberLike(v: unknown): v is number {
-  return typeof v === 'number' || v instanceof CorvidFloat;
-}
-
-function valuesEqual(got: unknown, want: unknown): boolean {
-  if (got === want) return true;
-  if (isNumberLike(got) && isNumberLike(want)) return numbersEqual(Number(got), Number(want));
-  if (typeof got === 'bigint' || typeof want === 'bigint') return false;
-  if (typeof got !== typeof want && !(isNumberLike(got) && isNumberLike(want))) return false;
-  if (typeof got === 'string') return got === want;
-  if (Array.isArray(got) && Array.isArray(want)) {
-    return got.length === want.length && got.every((g, i) => valuesEqual(g, want[i]));
-  }
-  if (got instanceof Uint8Array && want instanceof Uint8Array) {
-    if (got.length !== want.length) return false;
-    for (let i = 0; i < got.length; i++) if (got[i] !== want[i]) return false;
-    return true;
-  }
-  if (got instanceof Float32Array && want instanceof Float32Array) {
-    if (got.length !== want.length) return false;
-    const g = new Uint32Array(got.buffer, got.byteOffset, got.length);
-    const w = new Uint32Array(want.buffer, want.byteOffset, want.length);
-    for (let i = 0; i < g.length; i++) if (g[i] !== w[i]) return false;
-    return true;
-  }
-  if (isPlainObject(got) && isPlainObject(want)) {
-    const gk = Object.keys(got);
-    const wk = Object.keys(want);
-    if (gk.length !== wk.length) return false;
-    return wk.every((k) => k in got && valuesEqual(got[k], want[k]));
-  }
-  return false;
-}
-
-function render(v: unknown): string {
-  if (v === null || v === undefined) return String(v);
-  if (typeof v === 'number') return `${v} (bits 0x${f64Bits(v).toString(16)})`;
-  if (typeof v === 'bigint') return `${v}n`;
-  if (v instanceof Float32Array) return `vec(${Array.from(v).join(',')})`;
-  if (v instanceof Uint8Array) return `b(${Array.from(v).join(',')})`;
-  if (Array.isArray(v)) return `[${v.map(render).join(',')}]`;
-  return JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? `${x}n` : x));
-}
-
-function checkValue(got: unknown, wantTok: string, ctx: string): void {
-  const want = parseLiteral(wantTok);
-  expect(valuesEqual(got, want), `${ctx}: value mismatch: got ${render(got)}, want ${render(want)}`).toBe(true);
-}
-
-/** Walk a child path like a.b.0.c; undefined when absent. */
-function walkPath(root: unknown, path: string): unknown {
-  let cur: unknown = root;
-  for (const seg of path.split('.')) {
-    if (cur === null || cur === undefined) return undefined;
-    cur = isDigits(seg) && Array.isArray(cur)
-      ? cur[parseInt(seg, 10)]
-      : (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-/** The map_keys enumeration (the ABI's corvid_value_map_keys): keys of a mapped MAP, ascending engine byte order; anything else enumerates empty (inert, not an error). */
-function mapKeysOf(v: unknown): string[] {
-  return isPlainObject(v) ? Object.keys(v) : [];
-}
 
 // ---------------------------------------------------------------------------
 // Predicate helpers over the literal grammar
@@ -449,7 +140,7 @@ class Scenario {
   constructor(public file: string) {
     // values.txt runs against no scenario db (the scratch db below is
     // harness-internal: the mapping needs a boundary crossing).
-    this.scratch = new Db();
+    this.scratch = new DbC();
   }
 
   closeColl(): void {
@@ -477,7 +168,7 @@ class Scenario {
 
   openMemory(): void {
     this.closeDb();
-    this.db = new Db();
+    this.db = new DbC();
     this.docs();
   }
 
@@ -689,7 +380,7 @@ function runLine(s: Scenario, op: string, args: string[], expected: string, ctx:
   }
   if (op === 'NULLFREES') {
     // Every close()/dispose is idempotent — the free(NULL) analog.
-    const db2 = new Db();
+    const db2 = new DbC();
     const c2 = db2.collection('x');
     c2.close();
     c2.close();
@@ -1110,8 +801,8 @@ function startsWithDb(file: string): boolean {
 }
 
 function runScenario(file: string): void {
-  const path = join(GOLDEN_DIR, file);
-  const text = readFileSync(path, 'utf8');
+  const text = fixtureTexts[`./golden/${file}`];
+  if (typeof text !== 'string') throw new Error(`fixture not found: ${file}`);
   const s = new Scenario(file);
 
   if (startsWithDb(file)) s.openMemory();
