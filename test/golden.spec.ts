@@ -51,6 +51,9 @@
  *     document — plain objects, engine insertion order (ascending key
  *     bytes); non-maps enumerate empty, matching the ABI's inert
  *     empty cursor.
+ *   - VPUSH/VPUT mutate the materialized JS copy (vacuous w.r.t. the
+ *     binding — the stored engine value is untouched — but the
+ *     legitimate analog of the fixture's in-place value mutation).
  *   - PHRASE (the v0.3.0 additive ABI's corvid_phrase_search) runs
  *     through `Collection.phraseSearch` — the direct fn, BM25
  *     phrase-sum scores, not the builder's RRF.

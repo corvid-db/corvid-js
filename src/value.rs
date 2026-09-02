@@ -34,9 +34,13 @@
 //! port (NaN-class comparison). Vector elements are unaffected
 //! (Float32Array memory is copied, never boxed).
 //!
-//! Both directions carry a nesting-depth cap (`MAX_DEPTH`): deeper
-//! values (or cyclic JS input) convert to a clean InvalidArgument
-//! error rather than recursing toward a trap.
+//! Both directions carry a nesting-depth cap (`MAX_DEPTH`, the
+//! engine's `corvid::value::MAX_NESTING`): deeper values (or cyclic
+//! JS input) convert to a clean InvalidArgument error rather than
+//! recursing toward a trap. Capping ENCODE at the engine's decode
+//! bound also makes "converter-accepted == decodable" hold by
+//! construction: a value this binding accepts can never encode into
+//! bytes the engine's decoder would reject.
 
 use std::collections::BTreeMap;
 
@@ -47,12 +51,16 @@ use crate::error::{CResult, CorvidErr, ErrCode};
 
 const MAX_SAFE: i64 = 9_007_199_254_740_991; // 2^53 - 1
 
-/// Maximum container nesting the converters will walk. Deeper input
+/// Maximum container nesting the converters will walk — the engine's
+/// `corvid::value::MAX_NESTING` (128), taken directly from the
+/// compiled-in engine so the two can never drift. Deeper input
 /// (including cyclic JS objects, which are depth-unbounded) maps to a
-/// clean InvalidArgument instead of unbounded recursion; engine values
-/// deeper than this (only constructible via a crafted dump replay)
-/// fail the same way on the way out.
-const MAX_DEPTH: usize = 512;
+/// clean InvalidArgument instead of unbounded recursion. Capping at
+/// the engine's own decode bound (not a merely stack-safe larger
+/// number) is the contract: anything the converter accepts is
+/// decodable by the engine, so a deep-but-buildable value can never
+/// round-trip into bytes the session cannot read back.
+const MAX_DEPTH: usize = corvid::value::MAX_NESTING;
 
 fn argument(msg: &str) -> CorvidErr {
     CorvidErr::new(ErrCode::Argument, msg)

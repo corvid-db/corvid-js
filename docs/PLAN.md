@@ -153,9 +153,15 @@ Documented corners:
   `Uint8Array` the Bytes kind; other typed arrays (and `Map`/`Set`/
   `Date` objects) convert to a clean InvalidArgument asking for a
   plain form — silently mapping them would lose their contents.
-- **Depth cap**: both directions cap nesting at 512 — cyclic or
-  pathologically nested JS input becomes a clean InvalidArgument
-  instead of unbounded recursion toward a wasm stack trap.
+- **Depth cap**: both directions cap nesting at the engine's
+  `corvid::value::MAX_NESTING` (128), taken from the compiled-in
+  engine so the two cannot drift — cyclic or pathologically nested
+  JS input becomes a clean InvalidArgument instead of unbounded
+  recursion toward a wasm stack trap. Capping ENCODE at the engine's
+  decode bound (rather than a merely stack-safe larger number like
+  the bootstrap-era 512) makes converter-accepted == decodable: a
+  value the binding accepts can never encode into bytes the
+  engine's decoder rejects.
 
 ## 5. The persistence boundary (the recorded DESIGN deferral, stated plainly)
 

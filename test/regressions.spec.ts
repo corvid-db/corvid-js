@@ -19,6 +19,10 @@
  *   only -0.0 falls through to Float;
  * - M7: unbounded JS nesting converts to a clean InvalidArgument
  *   (depth cap), never a stack overflow trap;
+ * - F1: the depth cap IS the engine's decode bound
+ *   (`corvid::value::MAX_NESTING`, 128) — boundary-exact: 128-deep
+ *   round-trips, 129 is rejected cleanly (converter-accepted ==
+ *   decodable);
  * - the frozen ErrorCode table.
  */
 
@@ -157,18 +161,42 @@ test('B1(b): an int-typed schema field accepts negative numbers', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M7 — unbounded nesting is a clean error, not a trap
+// M7 — unbounded nesting is a clean error, not a trap; F1 — the cap
+// IS the engine's decode bound (128), boundary-exact
 // ---------------------------------------------------------------------------
 
 test('M7: deeply nested JS values convert to InvalidArgument, not a trap', () => {
   const c = db.collection('m7');
   let v: unknown = { n: 1 };
-  for (let i = 0; i < 1000; i++) v = { nested: v }; // cyclic-free but > MAX_DEPTH (512)
+  for (let i = 0; i < 1000; i++) v = { nested: v }; // cyclic-free but > MAX_DEPTH (128)
   expectCode(() => c.insert('deep', v as object), 12, 'depth cap');
   // The same object graph WITH a cycle hits the cap the same way.
   const cyc: Record<string, unknown> = { n: 1 };
   cyc.self = cyc;
   expectCode(() => c.insert('cyc', cyc), 12, 'cycle cap');
+  expect(c.len(), 'nothing stored').toBe(0);
+  c.close();
+});
+
+test('F1(a): 128-deep nesting round-trips — the engine decode bound is accepted', () => {
+  const c = db.collection('f1-boundary');
+  // 128 levels of {k: ...} around a scalar: the deepest allowed shape.
+  let v: unknown = { n: 1 };
+  for (let i = 0; i < 127; i++) v = { k: v };
+  c.insert('edge', v as object);
+  expect(c.len(), 'F1(a): 128-deep stored + readable').toBe(1);
+  // Walk back down: 127 mapped containers, then the scalar.
+  let cur: unknown = c.get('edge');
+  for (let i = 0; i < 127; i++) cur = (cur as Record<string, unknown>).k;
+  expect(cur, 'F1(a): innermost value').toEqual({ n: 1 });
+  c.close();
+});
+
+test('F1(b): 129-deep nesting is a clean InvalidArgument', () => {
+  const c = db.collection('f1-over');
+  let v: unknown = { n: 1 };
+  for (let i = 0; i < 128; i++) v = { k: v };
+  expectCode(() => c.insert('over', v as object), 12, 'depth cap');
   expect(c.len(), 'nothing stored').toBe(0);
   c.close();
 });
