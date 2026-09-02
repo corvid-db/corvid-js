@@ -158,25 +158,11 @@ index families, text+CJK+phrase, graph, geo — execute on every CI leg
 with deterministic output, and run identically in a browser (only the
 loader line differs).
 
-## Repository layout
-
-```
-src/            the wasm crate (wasm-bindgen classes over the engine)
-index.js        the sync OOP surface (public ESM entry, browsers/bundlers)
-opfs-async.js   the async facade (openOpfs / AsyncDb / AsyncCollection / AsyncQuery)
-opfs-worker.js  the Dedicated Worker runtime (engine + OPFS sync handles)
-opfs-rpc.js     the RPC dispatcher both hosts run (worker + tests)
-opfs-link.js    the transports (WorkerLink over postMessage; DirectLink in-process)
-opfs-shim.js    the host side of the OPFS storage backend
-node.mjs        the Node entry (synchronous init, sync surface only)
-index.d.ts      handwritten public types (sync + async)
-pkg/            wasm-pack output (built, not committed)
-docs/PLAN.md    architecture ruling, value contract, budget
-docs/OPFS-SPEC.md  the persistence binding contract (review-gated)
-docs/SURFACE.tsv   every engine construct: mapped here or N/A + reason
-scripts/        size-gate.sh, surface-gate.sh
-test/           golden + regressions + opfs backend + async facade
-test/browser-e2e/  the Playwright leg (fixtures, reload, cross-tab)
-```
+The binding contract for persistence is
+[docs/OPFS-SPEC.md](docs/OPFS-SPEC.md) (review-gated, like the C ABI's
+FFI.md); the architecture ruling, value contract, and size budget are
+in [docs/PLAN.md](docs/PLAN.md), and every engine construct is
+resolved to a binding API or a documented N/A in
+[docs/SURFACE.tsv](docs/SURFACE.tsv).
 
 License: MIT.
