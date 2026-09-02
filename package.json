@@ -1,6 +1,6 @@
 {
   "name": "corvid-js",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Browser/Worker binding for the corvid embedded database — the engine compiled to wasm32, exposed as idiomatic synchronous OOP (in-memory per session; OPFS persistence is a decided future addition)",
   "license": "MIT",
   "type": "module",
