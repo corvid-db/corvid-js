@@ -1,7 +1,8 @@
 # corvid-js OPFS persistence — program plan
 
-Date: 2026-09-02 · Status: DRAFT (user trigger lit 2026-09-01: "how do existing
-storages do it? can we use it?") · Owner: controller session
+Date: 2026-09-02 · Status: **EXECUTING** (T1 landed 2026-09-02: the binding
+contract is `docs/OPFS-SPEC.md`, review-gated before any code; the rulings
+below are locked and the spec elaborates them) · Owner: controller session
 Read first: engine DESIGN.md L0 (VFS layer: "the OPFS-SAHPool backend is
 specified, not implemented — the remaining blocker for browser persistence");
 the 2026-05-29 deferral decision + its 2026-08-30 ledger disposition ("reopening

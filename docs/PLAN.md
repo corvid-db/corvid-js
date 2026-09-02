@@ -165,36 +165,41 @@ Documented corners:
   value the binding accepts can never encode into bytes the
   engine's decoder rejects.
 
-## 5. The persistence boundary (the recorded DESIGN deferral, stated plainly)
+## 5. The persistence boundary (deferral CLOSED — program executing)
 
-**A `Db` is in-memory per session.** `wasm32-unknown-unknown` has no
-filesystem: the engine's file-backed store, and with it the
-path-based lifecycle ops (`Db::open(path)`, `dump`, `load`,
-`load_with_renames`, `backup`), are unconstructible here. This is not
-an omission to fix opportunistically — OPFS-backed persistence (an
-`OPFS-backed StorageBackend`, a Worker-only capability per the
-engine's DESIGN.md) is a **decided, trigger-based deferral** in the
-bindings program: when the engine's browser VFS lands, this binding
-grows `Db.openOpfs(name)` and the dump/load byte-stream forms, and the
-`docs/SURFACE.tsv` N/A rows for those constructs flip to MAPPED in
-the same change. Until then: everything you build in a session —
+**Shipped behavior: a `Db` is in-memory per session.** That contract
+is pinned by `test/regressions.spec.ts` and does not change.
+
+The recorded deferral is now **closed by execution**: the OPFS
+persistence program is underway — the binding contract is
+`docs/OPFS-SPEC.md` (review-gated, T1 of `docs/OPFS-PLAN.md`):
+Worker-hosted engine over a redb `StorageBackend` implemented on OPFS
+sync access handles, an async `openOpfs()`/`AsyncDb`/`AsyncCollection`/
+`AsyncQuery` mirror alongside the untouched sync surface, cross-tab
+single-writer surfaced as `Busy`, quota hygiene, and the two excluded
+fixture files (`persist.txt`, `admin.txt`) becoming executable on the
+browser conformance leg (267/267 there; the Node leg keeps 230/230 on
+the sync surface). Until the program releases (T6), everything in this
+section below describes the shipped in-memory reality and remains
+true of the sync surface afterward:
+
 documents, every index family (the ondisk-mode indexes included; on
 this target "ondisk" is the engine's disk-resident storage mode
-inside the session's store), schemas, TTLs, graph edges — lives and
-answers for the session's lifetime (pinned by the session-durability
+inside the session's store), schemas, TTLs, graph edges — live and
+answer for the session's lifetime (pinned by the session-durability
 regression test).
 
 Fixture consequence, honestly stated: of the engine's eight golden
 fixture files, **six are vendored verbatim** (`values`, `mutations`,
 `queries`, `schema`, `graph`, `geo` — 230 executable lines); **two are
-not** (`persist.txt`, `admin.txt`), because every scenario in them is
-anchored on FILEDB/REOPEN/DUMP/LOAD — exactly the deferred boundary.
-The in-memory-executable contracts those files also pinned (the
-compact quiescence gate, the collections listing, schema/TTL/graph
-survival across handle churn) are held by `test/regressions.spec.ts`
-instead. Nothing is skipped silently: the golden harness throws on
-unknown OPs, and its pre-scan/count check makes any dispatch-loop gap
-a failure.
+not yet** (`persist.txt`, `admin.txt`), because every scenario in them
+is anchored on FILEDB/REOPEN/DUMP/LOAD — exactly the boundary the OPFS
+program closes (SPEC §8). The in-memory-executable contracts those
+files also pinned (the compact quiescence gate, the collections
+listing, schema/TTL/graph survival across handle churn) are held by
+`test/regressions.spec.ts` instead. Nothing is skipped silently: the
+golden harness throws on unknown OPs, and its pre-scan/count check
+makes any dispatch-loop gap a failure.
 
 ## 6. The size budget (a CI-enforced contract)
 
@@ -252,10 +257,11 @@ suite running the same fixtures.
 2. **Browser-test leg**: when the bindings program stands up
    playwright-style infrastructure, run `test/golden.spec.ts` against
    the browser entry in CI (the spec is entry-agnostic).
-3. **OPFS persistence**: the §5 trigger — engine browser-VFS lands →
-   `Db.openOpfs`, byte-stream dump/load surface, SURFACE.tsv rows
-   flip, persist.txt/admin.txt vendored (their scenarios become
-   constructible), baseline drops by 5.
+3. **OPFS persistence**: the §5 trigger is LIT — executing now per
+   `docs/OPFS-PLAN.md` (T1–T6), contract at `docs/OPFS-SPEC.md`:
+   `openOpfs`/async mirror surface, byte-stream dump/load, `backupTo`,
+   SURFACE.tsv rows flip (annotated ASYNC) with T5, persist.txt/
+   admin.txt run on the browser leg, baseline drops by 5 there.
 4. **Ergonomic sugar** (only now, per the golden-before-sugar rule):
    `using` examples once `using` is widespread in browser toolchains.
 5. **Bench parity**: port the FFI bench shapes through the wasm
