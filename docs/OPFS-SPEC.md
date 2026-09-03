@@ -408,9 +408,15 @@ ours). The directory `corvid/` is created on first open.
 5. **Worker**: `navigator.storage.getDirectory()` →
    `getDirectoryHandle('corvid', {create:true})` →
    `getFileHandle('<name>.corvid', {create:true})` →
-   `createSyncAccessHandle()` — **the exclusivity point** (B8):
-   `NoModificationAllowedError` → the open rejects `Busy` (19),
-   message naming the file and stating another tab/handle holds it.
+   `createSyncAccessHandle()` — **the exclusivity point** (B8). The
+   WHATWG fs spec names the lock failure `NoModificationAllowedError`;
+   Chromium and Firefox ship that name, while WebKit rejects the SAME
+   contention with `InvalidStateError` (observed on the CI matrix leg,
+   Playwright WebKit 26.5 — a second same-origin worker's
+   `createSyncAccessHandle` on a held file). The binding maps the
+   *condition* — this call site's exclusive-lock failure — so either
+   name rejects the open `Busy` (19), message naming the file and
+   stating another tab/handle holds it.
 6. **Worker**: register the handle under id 1, call wasm
    `openOpfs(1)` → engine `Db::open_with_backend(OpfsBackend{1})` →
    reply ready. Engine errors (corrupt file, incompatible format,
@@ -460,7 +466,9 @@ are **not** exposed in the JS surface (sync or async) — unchanged.
    side effects — the path form's contract, restated for OPFS.
 3. Worker: create the file `{create:true}` → `createSyncAccessHandle()`
    → register id → wasm `backupOpfs(id)` → engine
-   `backup_with_backend` → shim flush+close, unregister.
+   `backup_with_backend` → shim flush+close, unregister. A lock
+   failure here maps `Busy` (19) exactly like open (§5.2 step 5's
+   name rule).
 4. On any failure after creation the partial file is removed
    (best-effort, original error wins) — the path form's no-debris rule.
 
@@ -492,7 +500,7 @@ imprecision caveat restated in its docstring.
 
 | Source | Condition | Code | Message shape |
 | --- | --- | --- | --- |
-| OPFS lock | `NoModificationAllowedError` at `createSyncAccessHandle` (open or backup) | **19 Busy** | `OPFS file is locked by another tab or handle: <name>` |
+| OPFS lock | `NoModificationAllowedError` (the WHATWG fs name; Chromium/Firefox) **or** WebKit's `InvalidStateError` for the same contention, at `createSyncAccessHandle` (open or backup) | **19 Busy** | `OPFS file is locked by another tab or handle: <name>` |
 | Quota | `QuotaExceededError` (write/truncate growth) | **4 Storage** | `storage quota exceeded` |
 | Bad name | validation failure (§5.1) | **11 InvalidName** | `invalid database name: <name>` |
 | Closed facade | any op after resolved `close()` | **1 Database** | `database is closed` |
@@ -554,15 +562,16 @@ queue, or coordination protocol to get wrong — the plan's ruling 4.
 
 ## 8. Conformance mapping (T5 — how the last two fixture files finally run)
 
-The browser conformance runs in **real Chromium, as two legs**: the
-SAME golden spec in-page via `await init()` (vitest browser mode —
-PLAN.md §7's "runs unchanged" promise, cashed for the six sync files'
-230 lines), and a Playwright E2E leg over plain http where the async
-surface runs the two previously excluded files with the
-production-faithful Worker construct (no dev-server transform — vite's
-dev-time worker rewrite stalls raw module workers, so the async leg
-runs unbundled; the quirk is a test-environment fact, not a shipped
-defect, and both legs' totals are pinned):
+The browser conformance runs in **all three engines — Chromium,
+Firefox, and WebKit — as two legs**: the SAME golden spec in-page via
+`await init()` (vitest browser mode — PLAN.md §7's "runs unchanged"
+promise, cashed for the six sync files' 230 lines), and a Playwright
+E2E leg over plain http where the async surface runs the two
+previously excluded files with the production-faithful Worker
+construct (no dev-server transform — vite's dev-time worker rewrite
+stalls raw module workers, so the async leg runs unbundled; the quirk
+is a test-environment fact, not a shipped defect, and both legs'
+totals are pinned):
 
 | Fixture op | Browser mapping |
 | --- | --- |
@@ -587,8 +596,34 @@ Extra browser-only tests the E2E leg adds: persistence across page reload
 closes); dump bytes transferred intact across the worker boundary.
 Quota-path unit tests run in Node against the fake handle (mocked —
 real quota can't be forced); the legacy-handle detection (§5.6, mocked
-thenable `getSize`) likewise. Firefox/Safari remain a documented
-manual matrix until CI runners allow (Chromium is the enforced leg).
+thenable `getSize`) likewise.
+
+**The enforced matrix (updated 2026-09-02): both legs run on
+Chromium, Firefox, and WebKit in CI — no engine is skipped, and no
+test carries an engine condition.** The former "Firefox/Safari remain
+a documented manual matrix" paragraph is closed by the matrix leg
+itself. Two environment facts the harness owns, recorded where they
+are applied (playwright.config.ts, test/browser-e2e/e2e-webkit
+.spec.mjs) and repeated here for the contract record:
+
+- **Firefox gates `navigator.storage.persist()` behind a permission
+  prompt** (§5.2 step 2 awaits it by default). In automation nobody
+  answers the prompt, so the promise stays pending forever and every
+  OPFS open hangs; `persisted()` resolves fine. The harness sets
+  Firefox's own testing prefs (`dom.storageManager.prompt.testing[.
+  allow]`) so persist() resolves `true`, like a user granting it.
+- **Playwright's default ephemeral context disables WebKit's OPFS
+  entirely** (`getDirectory()` rejects `UnknownError` — the same
+  private-browsing behavior MDN documents; microsoft/playwright
+  #18235). Real Safari runs a real profile, so the webkit leg runs
+  the same suite body through `launchPersistentContext` on a fresh
+  per-worker profile, and **wipes this origin's `corvid/` OPFS
+  directory before its first test** — Playwright's WebKit keeps
+  origin-keyed OPFS alive across profile directories (verified:
+  files written under profile X are visible under a fresh profile
+  Y), so without the wipe run N+1 would read run N's databases.
+  Both legs' assertions are identical across engines; only the
+  browser plumbing differs.
 
 ---
 

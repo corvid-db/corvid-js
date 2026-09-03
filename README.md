@@ -130,8 +130,8 @@ the async surface is fully Promise-based.
 npm install            # wasm-pack wrapper deps + vitest + playwright (Rust >= 1.88 + wasm32 target)
 npm run build          # wasm-pack build --release --target web  -> pkg/
 npm test               # the golden suite (230 lines) + regressions + OPFS suites
-npm run test:browser   # the golden suite in real Chromium (await init())
-npm run test:e2e       # async OPFS fixtures + reload/cross-tab (Playwright)
+npm run test:browser   # the golden suite in real Chromium, Firefox, and WebKit (await init())
+npm run test:e2e       # async OPFS fixtures + reload/cross-tab (Playwright, 3 engines)
 npm run size-gate      # gzipped wasm <= 1 MiB (engine reference: 2 MiB)
 npm run surface-gate   # docs/SURFACE.tsv vs the pinned engine surface
 npm run examples       # the six-example tour
@@ -145,13 +145,15 @@ files the C ABI smoke harness runs — against its public API on every
 CI run: **267/267 executable lines across all eight fixture files**.
 The six in-memory files (`values`, `mutations`, `queries`, `schema`,
 `graph`, `geo`; 230 lines) run against the sync surface — in Node AND
-in a real browser (`await init()`, same spec, unchanged). The two
-file-backed files (`persist.txt`, `admin.txt`; 37 lines) run against
-the async OPFS surface in Chromium end to end: real Worker, real OPFS
-file, real postMessage. Browser-only contracts are pinned too:
-persistence across a real page reload, and the cross-tab single-writer
-`Busy` with the lock freeing exactly when `close()` resolves
-(docs/OPFS-SPEC.md §8).
+in real browsers (`await init()`, same spec, unchanged: Chromium,
+Firefox, and WebKit). The two file-backed files (`persist.txt`,
+`admin.txt`; 37 lines) run against the async OPFS surface in all
+three engines end to end: real Worker, real OPFS file, real
+postMessage. Browser-only contracts are pinned too: persistence
+across a real page reload, and the cross-tab single-writer `Busy`
+with the lock freeing exactly when `close()` resolves
+(docs/OPFS-SPEC.md §8 — the full enforced matrix, no skipped
+engines; the per-engine harness notes live there too).
 
 Six runnable examples (`examples/`) — quickstart, hybrid, vector
 index families, text+CJK+phrase, graph, geo — execute on every CI leg

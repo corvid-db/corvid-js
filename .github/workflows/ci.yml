@@ -92,13 +92,16 @@ jobs:
       - run: npm pack --dry-run
 
   browser:
-    # The browser conformance legs (docs/OPFS-SPEC.md §8), both in real
-    # Chromium: (a) the SAME golden spec in-page via `await init()`
-    # (vitest browser mode — PLAN.md §7's promise); (b) the async OPFS
-    # fixtures + reload/cross-tab over plain http (Playwright E2E — the
-    # production-faithful Worker construct; vite's dev worker rewrite
-    # stalls raw module workers, so this leg runs unbundled).
-    name: browser conformance (chromium)
+    # The browser conformance legs (docs/OPFS-SPEC.md §8), in all three
+    # engines — the enforced B9 matrix: (a) the SAME golden spec in-page
+    # via `await init()` (vitest browser mode — PLAN.md §7's promise);
+    # (b) the async OPFS fixtures + reload/cross-tab over plain http
+    # (Playwright E2E — the production-faithful Worker construct; vite's
+    # dev worker rewrite stalls raw module workers, so this leg runs
+    # unbundled). Per-engine environment needs live in playwright
+    # .config.ts / test/browser-e2e/ (firefox: storage-persist prompt
+    # auto-answered; webkit: persistent-context twin spec + OPFS wipe).
+    name: browser conformance (chromium, firefox, webkit)
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -116,8 +119,8 @@ jobs:
         run: cargo install wasm-pack --locked
       - run: npm run build
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-      - name: Golden suite in-browser (230 lines via await init())
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Golden suite in-browser, 3 engines (230 lines via await init())
         run: npm run test:browser
-      - name: Async OPFS fixtures + reload/cross-tab E2E (37 lines, real OPFS)
+      - name: Async OPFS fixtures + reload/cross-tab E2E, 3 engines (37 lines, real OPFS)
         run: npm run test:e2e
