@@ -26,6 +26,7 @@
 
 'use strict';
 
+// docs:begin:vector_index
 import { Db } from '../node.mjs';
 
 const PROBE = new Float32Array([1.0, 0.0, 0.0, 0.0]);
@@ -68,3 +69,4 @@ console.log('(the quantized lane trades recall for a ~32x smaller index)');
 
 docs.close();
 db.close();
+// docs:end:vector_index

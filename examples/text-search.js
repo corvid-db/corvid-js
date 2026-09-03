@@ -20,6 +20,7 @@
 
 'use strict';
 
+// docs:begin:text_search
 import { Db } from '../node.mjs';
 
 const db = new Db();
@@ -57,3 +58,4 @@ phrase('leaps over a sleeping', 'phrase stop words collapsed:');
 
 notes.close();
 db.close();
+// docs:end:text_search

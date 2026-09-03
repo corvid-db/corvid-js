@@ -19,6 +19,7 @@
 
 'use strict';
 
+// docs:begin:geo
 import { Db } from '../node.mjs';
 
 const db = new Db();
@@ -49,3 +50,4 @@ console.log(
 
 places.close();
 db.close();
+// docs:end:geo
