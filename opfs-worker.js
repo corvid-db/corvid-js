@@ -119,26 +119,42 @@ const bootPromise = (async () => {
 })();
 
 async function makeEnv() {
+  // The exclusive-lock acquisition (SPEC §5.2 step 5 / §5.5 step 3): a
+  // default-mode sync handle takes the file's exclusive lock; a second
+  // tab or handle rejects here. The WHATWG fs spec names that failure
+  // NoModificationAllowedError ("If lockResult is failure") — Chromium
+  // and Firefox ship the spec name; WebKit (Safari's engine) rejects
+  // the SAME contention with InvalidStateError (observed on the webkit
+  // E2E leg, Playwright WebKit 26.5 / 1.62.1: a second worker's
+  // createSyncAccessHandle on a held same-origin file →
+  // "InvalidStateError: The object is in an invalid state."). The
+  // frozen Busy (19) maps the CONDITION, not the browser's exception
+  // spelling, so both names count here. `displayName` is the
+  // user-facing file name (db names carry the .corvid suffix; backup
+  // targets are plain siblings).
+  async function acquireSyncHandle(file, displayName) {
+    try {
+      return await file.createSyncAccessHandle();
+    } catch (e) {
+      if (
+        e?.name === 'NoModificationAllowedError' ||
+        e?.name === 'InvalidStateError'
+      ) {
+        throw {
+          code: 19,
+          message: `OPFS file is locked by another tab or handle: ${displayName}`,
+        };
+      }
+      throw { code: 18, message: `${e?.name ?? 'Error'}: ${e?.message ?? e}` };
+    }
+  }
+
   return {
     async openHandle(name) {
       const root = await navigator.storage.getDirectory();
       const dir = await root.getDirectoryHandle('corvid', { create: true });
       const file = await dir.getFileHandle(`${name}.corvid`, { create: true });
-      let handle;
-      try {
-        // The exclusivity point (SPEC §5.2 step 5): a default-mode sync
-        // handle takes the file's exclusive lock; a second tab or handle
-        // rejects here.
-        handle = await file.createSyncAccessHandle();
-      } catch (e) {
-        if (e?.name === 'NoModificationAllowedError') {
-          throw {
-            code: 19,
-            message: `OPFS file is locked by another tab or handle: ${name}.corvid`,
-          };
-        }
-        throw { code: 18, message: `${e?.name ?? 'Error'}: ${e?.message ?? e}` };
-      }
+      const handle = await acquireSyncHandle(file, `${name}.corvid`);
       return corvidOpfs.register(handle); // throws on legacy browsers (§5.6)
     },
 
@@ -157,7 +173,10 @@ async function makeEnv() {
         }
       }
       const file = await dir.getFileHandle(name, { create: true });
-      const handle = await file.createSyncAccessHandle();
+      // §6 pins this call site to Busy (19) as well ("open or
+      // backup"): a target another tab holds locked must reject with
+      // the lock code, not a generic Io.
+      const handle = await acquireSyncHandle(file, name);
       return corvidOpfs.register(handle);
     },
 
