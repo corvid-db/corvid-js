@@ -2,12 +2,15 @@
 // cross-tab BUSY). serve.mjs hosts the repo root over http: module
 // workers and wasm fetches need real URLs, and OPFS needs a proper
 // origin. All three engines (chromium/firefox/webkit) run the SAME
-// suite body (test/browser-e2e/suite.mjs) — the enforced matrix for
-// SPEC §1.3 B9's baseline. Per-engine environment needs, documented
-// at the point they apply: firefox auto-answers the storage-persist
-// permission prompt (launchOptions below); webkit runs the
-// persistent-context twin spec (e2e-webkit.spec.mjs) because
-// Playwright's ephemeral contexts disable WebKit's OPFS entirely.
+// suite body (test/browser-e2e/suite.mjs). Per-engine environment
+// needs, documented at the point they apply: firefox auto-answers the
+// storage-persist permission prompt (launchOptions below); webkit
+// runs the persistent-context twin spec (e2e-webkit.spec.mjs) because
+// Playwright's ephemeral contexts disable WebKit's OPFS entirely, and
+// CAPABILITY-GATES its six OPFS tests — ubuntu's GTK WebKit build
+// ships no Storage Manager API at all, so those tests skip there with
+// the evidence and run wherever the build has OPFS (macOS: verified).
+// SPEC §8 records the exact enforced-vs-skipped split.
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
@@ -68,7 +71,9 @@ export default defineConfig({
       // WebKit's OPFS needs a persistent profile (ephemeral contexts
       // are private-browsing to WebKit, where getDirectory() rejects
       // UnknownError) — the webkit twin spec overrides the fixtures
-      // with launchPersistentContext; see e2e-webkit.spec.mjs.
+      // with launchPersistentContext, and CAPABILITY-GATES the OPFS
+      // tests (ubuntu's GTK build has no navigator.storage at all);
+      // see e2e-webkit.spec.mjs for both facts and their evidence.
       testIgnore: /e2e\.spec\.mjs$/,
     },
   ],

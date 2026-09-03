@@ -92,15 +92,18 @@ jobs:
       - run: npm pack --dry-run
 
   browser:
-    # The browser conformance legs (docs/OPFS-SPEC.md §8), in all three
-    # engines — the enforced B9 matrix: (a) the SAME golden spec in-page
-    # via `await init()` (vitest browser mode — PLAN.md §7's promise);
-    # (b) the async OPFS fixtures + reload/cross-tab over plain http
-    # (Playwright E2E — the production-faithful Worker construct; vite's
-    # dev worker rewrite stalls raw module workers, so this leg runs
-    # unbundled). Per-engine environment needs live in playwright
-    # .config.ts / test/browser-e2e/ (firefox: storage-persist prompt
-    # auto-answered; webkit: persistent-context twin spec + OPFS wipe).
+    # The browser conformance legs (docs/OPFS-SPEC.md §8): (a) the
+    # SAME golden spec in-page via `await init()` (vitest browser
+    # mode — PLAN.md §7's promise) on all three engines; (b) the
+    # async OPFS fixtures + reload/cross-tab over plain http
+    # (Playwright E2E — the production-faithful Worker construct;
+    # vite's dev worker rewrite stalls raw module workers, so this leg
+    # runs unbundled) on chromium + firefox, and on webkit wherever
+    # the engine build ships OPFS — ubuntu's GTK WebKit has no
+    # navigator.storage, so the six webkit OPFS tests SKIP there with
+    # the evidence (capability probe, not an engine name; macOS WebKit
+    # runs them green). Per-engine environment needs live in
+    # playwright.config.ts / test/browser-e2e/.
     name: browser conformance (chromium, firefox, webkit)
     needs: lint
     runs-on: ubuntu-latest
@@ -122,5 +125,5 @@ jobs:
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Golden suite in-browser, 3 engines (230 lines via await init())
         run: npm run test:browser
-      - name: Async OPFS fixtures + reload/cross-tab E2E, 3 engines (37 lines, real OPFS)
+      - name: Async OPFS E2E — chromium + firefox full; webkit capability-gated (37 lines, real OPFS)
         run: npm run test:e2e

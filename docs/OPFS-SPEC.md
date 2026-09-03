@@ -563,15 +563,17 @@ queue, or coordination protocol to get wrong — the plan's ruling 4.
 ## 8. Conformance mapping (T5 — how the last two fixture files finally run)
 
 The browser conformance runs in **all three engines — Chromium,
-Firefox, and WebKit — as two legs**: the SAME golden spec in-page via
-`await init()` (vitest browser mode — PLAN.md §7's "runs unchanged"
-promise, cashed for the six sync files' 230 lines), and a Playwright
-E2E leg over plain http where the async surface runs the two
-previously excluded files with the production-faithful Worker
-construct (no dev-server transform — vite's dev-time worker rewrite
-stalls raw module workers, so the async leg runs unbundled; the quirk
-is a test-environment fact, not a shipped defect, and both legs'
-totals are pinned):
+Firefox, and WebKit — as two legs** (the webkit OPFS E2E tests are
+capability-gated where the engine build lacks OPFS; the exact
+enforced-vs-skipped split is stated at the end of this section): the
+SAME golden spec in-page via `await init()` (vitest browser mode —
+PLAN.md §7's "runs unchanged" promise, cashed for the six sync files'
+230 lines), and a Playwright E2E leg over plain http where the async
+surface runs the two previously excluded files with the
+production-faithful Worker construct (no dev-server transform —
+vite's dev-time worker rewrite stalls raw module workers, so the
+async leg runs unbundled; the quirk is a test-environment fact, not a
+shipped defect, and both legs' totals are pinned):
 
 | Fixture op | Browser mapping |
 | --- | --- |
@@ -598,13 +600,36 @@ Quota-path unit tests run in Node against the fake handle (mocked —
 real quota can't be forced); the legacy-handle detection (§5.6, mocked
 thenable `getSize`) likewise.
 
-**The enforced matrix (updated 2026-09-02): both legs run on
-Chromium, Firefox, and WebKit in CI — no engine is skipped, and no
-test carries an engine condition.** The former "Firefox/Safari remain
-a documented manual matrix" paragraph is closed by the matrix leg
-itself. Two environment facts the harness owns, recorded where they
-are applied (playwright.config.ts, test/browser-e2e/e2e-webkit
-.spec.mjs) and repeated here for the contract record:
+**The enforced matrix (updated 2026-09-03, after the first ubuntu CI
+run), stated exactly:**
+
+- **In-page sync leg (vitest browser, the 230-line golden suite):
+  all three engines, enforced in CI on ubuntu.** No engine is
+  skipped; the sync surface has no OPFS dependency and webkit's
+  ubuntu leg passes it green.
+- **OPFS E2E leg (the 37 fixture lines + reload/cross-tab/dump):
+  chromium and firefox enforced in CI on ubuntu.** WebKit runs the
+  SAME suite body wherever the engine build ships OPFS — verified on
+  macOS Playwright WebKit (persistent-context twin spec, four green
+  full runs; see below) — and **the six OPFS-dependent webkit tests
+  SKIP on ubuntu's GTK WebKit build, which ships no Storage Manager
+  API at all**: `navigator.storage` is undefined there, and both the
+  harness wipe and every OPFS call fail with
+  `TypeError: undefined is not an object (evaluating
+  'navigator.storage.getDirectory')` (CI run 33727798807; the
+  in-page sync suite and both other engines passed). The skip is a
+  CAPABILITY probe (`typeof navigator?.storage?.getDirectory ===
+  'function'`, once per worker — never an engine name), so the day
+  Playwright's Linux WebKit grows OPFS the tests run again with no
+  code change; the failing evidence rides along as the skip reason —
+  an honest scoping (evidence carried, §10's guards), not a quiet
+  one, and the only place the matrix cannot currently enforce.
+
+The former "Firefox/Safari remain a documented manual matrix"
+paragraph is closed by this split. Three environment facts the
+harness owns, recorded where they are applied (playwright.config.ts,
+test/browser-e2e/e2e-webkit.spec.mjs) and repeated here for the
+contract record:
 
 - **Firefox gates `navigator.storage.persist()` behind a permission
   prompt** (§5.2 step 2 awaits it by default). In automation nobody
@@ -618,12 +643,15 @@ are applied (playwright.config.ts, test/browser-e2e/e2e-webkit
   #18235). Real Safari runs a real profile, so the webkit leg runs
   the same suite body through `launchPersistentContext` on a fresh
   per-worker profile, and **wipes this origin's `corvid/` OPFS
-  directory before its first test** — Playwright's WebKit keeps
-  origin-keyed OPFS alive across profile directories (verified:
-  files written under profile X are visible under a fresh profile
-  Y), so without the wipe run N+1 would read run N's databases.
-  Both legs' assertions are identical across engines; only the
-  browser plumbing differs.
+  directory before its first test** (only after the capability probe
+  passes) — Playwright's WebKit keeps origin-keyed OPFS alive across
+  profile directories (verified: files written under profile X are
+  visible under a fresh profile Y), so without the wipe run N+1
+  would read run N's databases.
+- **Ubuntu's GTK WebKit build ships no Storage Manager API at all**
+  (the capability-gate fact above; macOS's WebKit build ships it).
+  Where OPFS exists, both legs' assertions are identical across
+  engines; only the browser plumbing differs.
 
 ---
 

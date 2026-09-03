@@ -12,6 +12,14 @@
 // (WebKit's OPFS needs a real profile — see that file). One body, so
 // the engines can never drift.
 //
+// Capability gate: every OPFS-dependent test requests the `opfs`
+// fixture; each ENTRY provides it. e2e.spec.mjs provides it as
+// always-available; e2e-webkit.spec.mjs probes whether the engine
+// build actually ships the Storage Manager API and SKIPS those tests
+// (with the evidence) where it does not — ubuntu's GTK WebKit build
+// has no navigator.storage at all. The arithmetic test is engine- and
+// OPFS-free and runs everywhere.
+//
 // Served by serve.mjs over http (module workers + wasm fetch need real
 // URLs). The page side of each test lives in runner.mjs, so exactly
 // the shipped package code executes in the browser.
@@ -69,15 +77,17 @@ async function runFixture(page, file, dbName) {
   return out.result;
 }
 
-/** Register the shared E2E suite on the caller's `test` object. */
+/** Register the shared E2E suite on the caller's `test` object. The
+ * entry MUST provide an `opfs` fixture (the capability gate — see the
+ * header); the arithmetic test needs none. */
 export function buildSuite(test) {
-  test('persist.txt — ondisk indexes, schema, documents survive close/reopen (real OPFS)', async ({ page }) => {
+  test('persist.txt — ondisk indexes, schema, documents survive close/reopen (real OPFS)', async ({ page, opfs }) => {
     await page.goto('/');
     const { lines } = await runFixture(page, 'persist.txt', 'e2e-persist');
     expect(lines).toBe(13);
   });
 
-  test('admin.txt — dump/load/renames, backup, compact gate (real OPFS)', async ({ page }) => {
+  test('admin.txt — dump/load/renames, backup, compact gate (real OPFS)', async ({ page, opfs }) => {
     await page.goto('/');
     const { lines } = await runFixture(page, 'admin.txt', 'e2e-admin');
     expect(lines).toBe(24);
@@ -87,20 +97,20 @@ export function buildSuite(test) {
     expect(13 + 24).toBe(37);
   });
 
-  test('persistence across a full close (real Worker + OPFS)', async ({ page }) => {
+  test('persistence across a full close (real Worker + OPFS)', async ({ page, opfs }) => {
     await page.goto('/');
     await run(page, 'roundtrip-write', 'e2e-roundtrip');
     const doc = await run(page, 'roundtrip-read', 'e2e-roundtrip');
     expect(doc).toEqual({ n: 7, body: 'hello opfs' });
   });
 
-  test('dump bytes cross the worker boundary intact', async ({ page }) => {
+  test('dump bytes cross the worker boundary intact', async ({ page, opfs }) => {
     await page.goto('/');
     const n = await run(page, 'dump-bytes', 'e2e-dump');
     expect(n).toBeGreaterThan(12);
   });
 
-  test('data persists across a real page reload', async ({ page }) => {
+  test('data persists across a real page reload', async ({ page, opfs }) => {
     await page.goto('/');
     await run(page, 'reload-setup', 'e2e-reload');
 
@@ -109,7 +119,7 @@ export function buildSuite(test) {
     expect(doc).toEqual({ n: 42, body: 'survives reload' });
   });
 
-  test('cross-tab second open rejects with Busy (19), lock frees on close', async ({ page, context }) => {
+  test('cross-tab second open rejects with Busy (19), lock frees on close', async ({ page, context, opfs }) => {
     await page.goto('/');
     await run(page, 'busy-hold', 'e2e-busy');
 
